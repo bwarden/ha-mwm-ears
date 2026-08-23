@@ -6,6 +6,12 @@ one infrared proxy configured in HA (e.g. an ESPHome IR/RF proxy); the
 integration is a *consumer* on that platform, not a hardware transport
 itself.
 
+> **Disclaimer:** Independent community project for interoperability with
+> independently purchased hardware. Not supplied by, authorized by,
+> affiliated with, or endorsed by Disney. "Made With Magic", "Glow With The
+> Show", and all related names and marks are trademarks of their respective
+> owners.
+
 The component is self-contained: the MWM protocol library is vendored
 under `custom_components/mwm_ears/_mwm/` (framing, CRC-8/Dallas,
 palette tables, phrase decoder, timing codec). The only external
