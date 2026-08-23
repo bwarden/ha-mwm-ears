@@ -35,6 +35,7 @@ LEFT = "left"
 RIGHT = "right"
 
 EAR_OFF_CODE = 0x60
+DEFAULT_COLOR_CODE = 0x67  # white
 
 # Rig-verified palette template (samples/mwm-gwts-colors.tsv rows
 # "palette-XX-both"): sets palette color pp on both ears simultaneously.
@@ -71,6 +72,10 @@ class EarPairState:
         self._clock = clock
         self.codes: dict[str, int] = {LEFT: EAR_OFF_CODE, RIGHT: EAR_OFF_CODE}
         self.desired_on: dict[str, bool] = {LEFT: False, RIGHT: False}
+        # Last explicitly chosen simple color per side (None = never set);
+        # bare turn-ons restore it. Palette shades are not remembered here
+        # because they apply to both ears and cannot restore per-side.
+        self.last_simple: dict[str, int | None] = {LEFT: None, RIGHT: None}
         self.palette_index: int | None = None
         self.running_effect: str | None = None
         self.suspended_by: str | None = None
@@ -134,6 +139,8 @@ class EarPairState:
         self.running_effect = None
         self.codes[side] = code
         self.desired_on[side] = code != EAR_OFF_CODE
+        if code != EAR_OFF_CODE:
+            self.last_simple[side] = code
         self.resume()
         await self._send(self._fused_frame, BURST_REPEATS)
 
@@ -155,6 +162,17 @@ class EarPairState:
         self.desired_on = {LEFT: True, RIGHT: True}
         self.resume()
         await self._send(build_frame([0x24, 0x48, index]), BURST_REPEATS)
+
+    async def turn_on_side(self, side: str) -> int:
+        """Light one ear with its remembered simple color.
+
+        Bare HA turn-ons carry no color; re-issue the side's last explicit
+        pick so the light state matches reality again, defaulting to white
+        when nothing was ever chosen. Returns the code sent.
+        """
+        code = self.last_simple.get(side) or DEFAULT_COLOR_CODE
+        await self.apply_simple(side, code)
+        return code
 
     async def turn_off_side(self, side: str) -> None:
         """Turn one ear off via its half of the fused phrase.

@@ -79,6 +79,34 @@ class ApplyTests(unittest.TestCase):
         self.assertEqual(list(frame[1:-1]), [0x24, 0x48, 0x84])
 
 
+class TurnOnRestoreTests(unittest.TestCase):
+    def test_fresh_pair_defaults_to_white(self):
+        h = Harness()
+        sent = run(h.pair.turn_on_side("left"))
+        self.assertEqual(sent, 0x67)
+        frame = bytes.fromhex(h.calls[-1][0])
+        self.assertEqual(frame[1], 0x67)
+
+    def test_restores_last_explicit_color(self):
+        h = Harness()
+        run(h.pair.apply_simple("left", 0x64))   # red
+        run(h.pair.turn_off_side("left"))
+        before = len(h.calls)
+        sent = run(h.pair.turn_on_side("left"))
+        self.assertEqual(sent, 0x64)
+        frame = bytes.fromhex(h.calls[-1][0])
+        self.assertEqual(frame[1], 0x64)
+        self.assertEqual(len(h.calls), before + 1)  # bare on really transmits
+
+    def test_sides_remember_independently(self):
+        h = Harness()
+        run(h.pair.apply_simple("left", 0x64))
+        run(h.pair.apply_simple("right", 0x61))
+        self.assertEqual(run(h.pair.turn_on_side("right")), 0x61)
+        # right's pick must not leak into left
+        self.assertNotEqual(run(h.pair.turn_on_side("left")), 0x61)
+
+
 class OffSemanticsTests(unittest.TestCase):
     def test_off_sent_once_and_never_refreshed_when_all_off(self):
         h = Harness()

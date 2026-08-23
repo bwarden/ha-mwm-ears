@@ -13,9 +13,9 @@ from homeassistant.components.light import (
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.device_registry import DeviceInfo
-from homeassistant.util.color import color_hs_to_RGB
+from homeassistant.util.color import color_hs_to_RGB, color_RGB_to_hs
 
-from ._mwm import nearest_entry
+from ._mwm import SIMPLE_COLORS, nearest_entry
 from .const import DEVICE_ID, DOMAIN, HUB_KEY
 from .ears import LEFT, RIGHT, EarPairState, ObservedHub
 
@@ -151,9 +151,12 @@ class MwmEarLight(LightEntity):
             self._attr_hs_color = hs_color
             return
 
-        # Bare turn-on with no remembered state: nothing meaningful to send.
+        # Bare turn-on: restore the side's last explicit color (white if
+        # none) instead of faking an on state that sends nothing IR.
+        code = await self._store.turn_on_side(self._side)
+        rgb = SIMPLE_COLORS[code][1]
+        self._attr_hs_color = color_RGB_to_hs(*rgb)
         self._is_on = True
-        self.async_write_ha_state()
 
     async def async_turn_off(self, **kwargs) -> None:
         await self._store.turn_off_side(self._side)
