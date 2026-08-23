@@ -16,7 +16,7 @@ from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.util.color import color_hs_to_RGB
 
 from ._mwm import nearest_entry
-from .const import DOMAIN, HUB_KEY
+from .const import DEVICE_ID, DOMAIN, HUB_KEY
 from .ears import LEFT, RIGHT, EarPairState, ObservedHub
 
 _LOGGER = logging.getLogger(__name__)
@@ -86,12 +86,14 @@ class MwmEarLight(LightEntity):
         base = entry.data["name"]
         self._attr_name = f"{base} {_SIDE_NAMES[side]} Ear"
         self._attr_unique_id = f"{entry.entry_id}-{side}"
+        # Transmitter and receiver entries deliberately share ONE device:
+        # the IR hardware is usually a single box, and even split rx/tx acts
+        # as one logical MWM room controller.
         self._attr_device_info = DeviceInfo(
-            identifiers={(DOMAIN, entry.entry_id)},
-            name=base,
+            identifiers={(DOMAIN, DEVICE_ID)},
+            name="MWM Ears",
             manufacturer="Disney (Made With Magic)",
-            model="MWM/GWTS infrared ear pair",
-            via_device=(DOMAIN, f"infrared:{entry.entry_id}"),
+            model="MWM/GWTS infrared room controller",
         )
         self._is_on = False
 

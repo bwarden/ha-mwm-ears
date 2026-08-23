@@ -19,7 +19,7 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.device_registry import DeviceInfo
 
-from .const import CONF_ENTITY_ID, DOMAIN, HUB_KEY
+from .const import CONF_ENTITY_ID, DEVICE_ID, DOMAIN, HUB_KEY
 from .ears import ObservedHub, ReceiverData
 
 _LOGGER = logging.getLogger(__name__)
@@ -48,10 +48,10 @@ class _ReceiverSensor(SensorEntity):
 
     def __init__(self, entry: ConfigEntry) -> None:
         self._attr_device_info = DeviceInfo(
-            identifiers={(DOMAIN, entry.entry_id)},
-            name=entry.data["name"],
-            manufacturer="MWM / Glow With The Show",
-            model="MWM infrared receiver binding",
+            identifiers={(DOMAIN, DEVICE_ID)},
+            name="MWM Ears",
+            manufacturer="Disney (Made With Magic)",
+            model="MWM/GWTS infrared room controller",
         )
         self._base_id = entry.entry_id
         self._ir_entity_id = entry.data[CONF_ENTITY_ID]

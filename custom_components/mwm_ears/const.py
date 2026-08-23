@@ -12,3 +12,4 @@ CONF_ENTITY_ID = "entity_id"
 
 # hass.data[DOMAIN] key for the shared overheard-traffic hub.
 HUB_KEY = "observed_hub"
+DEVICE_ID = "mwm_ears"  # one shared device across transmitter+receiver entries
