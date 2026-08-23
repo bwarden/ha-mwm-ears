@@ -98,6 +98,16 @@ class OffSemanticsTests(unittest.TestCase):
         self.assertFalse(h.pair.should_refresh)
         self.assertFalse(run(h.pair.refresh_tick()))
 
+    def test_turning_off_already_dark_ear_sends_nothing(self):
+        h = Harness()
+        run(h.pair.apply_simple("left", 0x64))
+        before = len(h.calls)
+        run(h.pair.turn_off_side("right"))  # right was never lit
+        self.assertEqual(len(h.calls), before)
+        # and an all-dark pair stays silent too
+        run(h.pair.turn_off_side("left"))
+        self.assertEqual(len(h.calls), before + 1)  # only the real off burst
+
     def test_fully_on_pair_repeats_once_per_tick(self):
         h = Harness()
         run(h.pair.apply_simple("left", 0x64))

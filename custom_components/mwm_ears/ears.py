@@ -161,7 +161,14 @@ class EarPairState:
 
         Sent as a single initial multi-burst only: refresh stays quiet
         unless both ears are on, so off states are never re-issued.
+        Already-dark ears are a no-op with no transmission: HA fires
+        turn_off liberally (automations, area off, stale restored state)
+        and re-bursting the fused phrase here once produced surprise
+        all-off commands.
         """
+        if self.codes[side] == EAR_OFF_CODE:
+            self.desired_on[side] = False
+            return
         self.codes[side] = EAR_OFF_CODE
         self.desired_on[side] = False
         if not any(self.desired_on.values()):
