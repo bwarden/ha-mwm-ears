@@ -1,6 +1,6 @@
 {
-  "domain": "ir_remote_tools",
-  "name": "IR Remote Tools",
+  "domain": "mwm_ears",
+  "name": "MWM Ears",
   "codeowners": ["@bwarden"],
   "config_flow": true,
   "dependencies": ["infrared"],

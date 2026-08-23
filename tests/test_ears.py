@@ -12,7 +12,7 @@ import sys
 
 _EARS = (
     pathlib.Path(__file__).resolve().parents[1]
-    / "custom_components" / "ir_remote_tools" / "ears.py"
+    / "custom_components" / "mwm_ears" / "ears.py"
 )
 _spec = importlib.util.spec_from_file_location("ears_core", _EARS)
 ears = importlib.util.module_from_spec(_spec)

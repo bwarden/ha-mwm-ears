@@ -1,4 +1,4 @@
-# Home Assistant integration: `ir_remote_tools`
+# Home Assistant integration: `mwm_ears`
 
 Controls Disney "Made With Magic" / Glow With The Show ears through Home
 Assistant's **infrared entity platform** (HA 2026.4+). Requires at least
@@ -7,7 +7,7 @@ integration is a *consumer* on that platform, not a hardware transport
 itself.
 
 The component is self-contained: the MWM protocol library is vendored
-under `custom_components/ir_remote_tools/_mwm/` (framing, CRC-8/Dallas,
+under `custom_components/mwm_ears/_mwm/` (framing, CRC-8/Dallas,
 palette tables, phrase decoder, timing codec). The only external
 requirement is `infrared-protocols`, pulled in via the manifest for the
 framework's `Command` envelope type; MWM support itself lives here.
@@ -17,10 +17,10 @@ framework's `Command` envelope type; MWM support itself lives here.
 Unpack the distribution into your HA config directory:
 
 ```
-unzip dist/ir_remote_tools.zip -d ~/.homeassistant/
+unzip dist/mwm_ears.zip -d ~/.homeassistant/
 ```
 
-(or copy `custom_components/ir_remote_tools/` by hand). Restart Home
+(or copy `custom_components/mwm_ears/` by hand). Restart Home
 Assistant, then add endpoints via Settings -> Devices & Services -> Add
 Integration -> "IR Remote Tools". Each endpoint binds one infrared entity:
 

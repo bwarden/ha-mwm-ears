@@ -10,7 +10,7 @@ import sys
 
 _BASE = (
     pathlib.Path(__file__).resolve().parents[1]
-    / "custom_components" / "ir_remote_tools" / "_mwm"
+    / "custom_components" / "mwm_ears" / "_mwm"
 )
 
 if "mwm" not in sys.modules:

@@ -1,6 +1,6 @@
 """Constants for the IR Remote Tools integration."""
 
-DOMAIN = "ir_remote_tools"
+DOMAIN = "mwm_ears"
 
 CONF_KIND = "kind"
 KIND_TRANSMITTER = "transmitter"
