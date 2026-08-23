@@ -1,0 +1,22 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Add an MWM infrared endpoint",
+        "description": "Register an IR transmitter (creates ear lights) or an IR receiver (creates diagnostic sensors). Topics follow the MQTT test rig layout documented in the repository README.",
+        "data": {
+          "kind": "What does this device do?",
+          "name": "Name",
+          "transmit_topic": "MQTT topic to transmit on (transmitters only)",
+          "receive_topic": "MQTT topic carrying decoded messages (receivers only)"
+        }
+      }
+    },
+    "error": {
+      "missing_topic": "A topic is required for the selected device kind."
+    },
+    "abort": {
+      "already_configured": "This endpoint is already configured."
+    }
+  }
+}

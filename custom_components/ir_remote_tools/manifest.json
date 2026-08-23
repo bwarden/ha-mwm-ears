@@ -1,0 +1,13 @@
+{
+  "domain": "ir_remote_tools",
+  "name": "IR Remote Tools",
+  "codeowners": ["@bwarden"],
+  "config_flow": true,
+  "dependencies": ["mqtt"],
+  "documentation": "https://github.com/bwarden/ir-remote-tools",
+  "integration_type": "hub",
+  "iot_class": "local_push",
+  "issue_tracker": "https://github.com/bwarden/ir-remote-tools/issues",
+  "requirements": [],
+  "version": "0.1.0"
+}
