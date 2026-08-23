@@ -6,5 +6,9 @@ CONF_KIND = "kind"
 KIND_TRANSMITTER = "transmitter"
 KIND_RECEIVER = "receiver"
 
-CONF_TRANSMIT_TOPIC = "transmit_topic"
-CONF_RECEIVE_TOPIC = "receive_topic"
+# Both entry kinds store one infrared entity id: an emitter for
+# transmitters, a receiver for receiver entries.
+CONF_ENTITY_ID = "entity_id"
+
+# hass.data[DOMAIN] key for the shared overheard-traffic hub.
+HUB_KEY = "observed_hub"

@@ -1,22 +1,35 @@
-"""Shared runtime state bridging HA platforms to the vendored mwm library."""
+"""Pure state logic for ear-pair control and overheard MWM traffic.
+
+Deliberately free of Home Assistant imports so the refresh/suspension
+rules are unit-testable standalone: transmission is an injected async
+callable and clocks are injectable. The HA glue in __init__.py wires
+these objects to infrared emitter/receiver entities.
+"""
 
 from __future__ import annotations
 
-import logging
+import time
 
-import homeassistant.util.dt as dt_util
-from homeassistant.core import HomeAssistant
-
-from ._mwm import (
-    EarStateTracker,
-    build_frame,
-    describe_frame,
-    effect_label,
-    frame_is_valid,
-    irsend_payload,
-)
-
-_LOGGER = logging.getLogger(__name__)
+if __package__:  # normal HA component context
+    from ._mwm import (
+        EAR_STATE_OFF,
+        PALETTE,
+        SIMPLE_COLORS,
+        EarStateTracker,
+        build_frame,
+        describe_frame,
+        frame_is_valid,
+    )
+else:  # standalone test harness: _bootstrap registers us as "mwm"
+    from mwm import (
+        EAR_STATE_OFF,
+        PALETTE,
+        SIMPLE_COLORS,
+        EarStateTracker,
+        build_frame,
+        describe_frame,
+        frame_is_valid,
+    )
 
 LEFT = "left"
 RIGHT = "right"
@@ -28,98 +41,234 @@ EAR_OFF_CODE = 0x60
 _PALETTE_TEMPLATE = [0x19, 0x07, 0x0F, 0x16]
 _PALETTE_TEMPLATE_TAIL = [0x18, 0x04]
 
-
-async def _publish(hass: HomeAssistant, topic: str, frame: bytes) -> None:
-    """Transmit one MWM frame through the MQTT broker as a Tasmota IRsend."""
-    payload = irsend_payload(frame)
-    await hass.services.async_call(
-        "mqtt",
-        "publish",
-        {"topic": topic, "payload": payload},
-        blocking=True,
-    )
-    _LOGGER.debug("transmitted %s to %s", frame.hex().upper(), topic)
+# Extra transmissions per user-initiated send (initial multi-burst).
+BURST_REPEATS = 2
+# Periodic re-issue cadence so late joiners sync; matches ear-hat beacon
+# pacing (~7-12 s).
+DEFAULT_REFRESH_S = 8.0
+# Transmissions newer than this count as our own echo when overheard.
+OURS_WINDOW_S = 15.0
 
 
 class EarPairState:
-    """Desired per-ear colors for one transmitter's paired entities.
+    """Desired state of one transmitter's ear pair plus repeat policy.
 
-    Simple colors are transmitted as fused one-bit phrases (91 cL cR) so the
-    two light entities stay independent. Palette shades have no verified
-    per-ear phrase: the rig-verified template applies them to both ears at
-    once, so choosing a snapped palette shade changes the partner ear too.
+    Refresh semantics:
+
+    - user-initiated sends use a multi-burst (repeat_count=BURST_REPEATS);
+    - while BOTH ears are on, a periodic tick re-issues the current fused
+      colour phrase once so newly-powered ears join in;
+    - any off state is sent only as its initial burst and never repeated,
+      so independently-controlled ears are left alone;
+    - effect invocations are never re-issued (restarting a running program
+      every few seconds would glitch it);
+    - when a foreign MWM command is overheard (wand, another transmitter),
+      repetition suspends until the next explicit user action.
     """
 
-    def __init__(self, hass: HomeAssistant, topic: str) -> None:
-        self.hass = hass
-        self.topic = topic
+    def __init__(self, transmit, *, clock=time.monotonic) -> None:
+        self._transmit = transmit  # async (frame: bytes, repeat_count: int)
+        self._clock = clock
         self.codes: dict[str, int] = {LEFT: EAR_OFF_CODE, RIGHT: EAR_OFF_CODE}
+        self.desired_on: dict[str, bool] = {LEFT: False, RIGHT: False}
         self.palette_index: int | None = None
         self.running_effect: str | None = None
+        self.suspended_by: str | None = None
+        self.refresh_interval: float = DEFAULT_REFRESH_S
+        self.listeners: list = []
+        self._last_sent: tuple[str, float] | None = None
+
+    # -- display ---------------------------------------------------------
+
+    def _notify(self) -> None:
+        for callback in self.listeners:
+            callback()
+
+    def side_color_name(self, side: str) -> str:
+        if self.palette_index is not None:
+            entry = PALETTE.get(self.palette_index)
+            return entry[0] if entry else "unknown"
+        code = self.codes[side]
+        if code == EAR_OFF_CODE:
+            return EAR_STATE_OFF
+        return SIMPLE_COLORS[code][0] if code in SIMPLE_COLORS else "unknown"
+
+    # -- ours-vs-foreign discrimination ----------------------------------
+
+    def _mark_sent(self, frame: bytes) -> None:
+        self._last_sent = (bytes(frame).hex().upper(), self._clock())
+
+    def matches_recent(self, frame_hex: str) -> bool:
+        if not self._last_sent:
+            return False
+        hex_seen, seen_at = self._last_sent
+        return (
+            hex_seen == frame_hex.upper()
+            and self._clock() - seen_at <= OURS_WINDOW_S
+        )
+
+    def suspend(self, reason: str) -> None:
+        if self.suspended_by != reason:
+            self.suspended_by = reason
+            self._notify()
+
+    def resume(self) -> None:
+        if self.suspended_by is not None:
+            self.suspended_by = None
+            self._notify()
+
+    # -- commands ---------------------------------------------------------
 
     @property
-    def palette_applied(self) -> bool:
-        return self.palette_index is not None
-
     def _fused_frame(self) -> bytes:
         return build_frame([self.codes[LEFT], self.codes[RIGHT]])
 
-    async def async_set_simple(self, side: str, code: int) -> None:
+    async def _send(self, frame: bytes, repeat_count: int) -> None:
+        await self._transmit(frame, repeat_count)
+        self._mark_sent(frame)
+        self._notify()
+
+    async def apply_simple(self, side: str, code: int) -> None:
+        """Set one ear's simple color (0x60 off .. 0x67 white), fused."""
         self.palette_index = None
         self.running_effect = None
         self.codes[side] = code
-        await _publish(self.hass, self.topic, self._fused_frame())
+        self.desired_on[side] = code != EAR_OFF_CODE
+        self.resume()
+        await self._send(self._fused_frame, BURST_REPEATS)
 
-    async def async_set_palette(self, index: int) -> None:
+    async def apply_palette(self, index: int) -> None:
+        """Apply a palette shade to both ears (no verified per-ear form)."""
         self.palette_index = index
         self.running_effect = None
-        await _publish(
-            self.hass,
-            self.topic,
+        self.desired_on = {LEFT: True, RIGHT: True}
+        self.resume()
+        await self._send(
             build_frame(_PALETTE_TEMPLATE + [index] + _PALETTE_TEMPLATE_TAIL),
+            BURST_REPEATS,
         )
 
-    async def async_invoke_effect(self, index: int, label: str) -> None:
+    async def apply_effect(self, index: int, label: str) -> None:
         # 24 lets an invocation take effect while a built-in program runs;
         # park captures show bare 48 XX phrases working as well.
         self.running_effect = label
-        await _publish(self.hass, self.topic, build_frame([0x24, 0x48, index]))
+        self.desired_on = {LEFT: True, RIGHT: True}
+        self.resume()
+        await self._send(build_frame([0x24, 0x48, index]), BURST_REPEATS)
+
+    async def turn_off_side(self, side: str) -> None:
+        """Turn one ear off via its half of the fused phrase.
+
+        Sent as a single initial multi-burst only: refresh stays quiet
+        unless both ears are on, so off states are never re-issued.
+        """
+        self.codes[side] = EAR_OFF_CODE
+        self.desired_on[side] = False
+        if not any(self.desired_on.values()):
+            self.running_effect = None
+        self.resume()
+        await self._send(self._fused_frame, BURST_REPEATS)
+
+    # -- periodic refresh --------------------------------------------------
+
+    @property
+    def should_refresh(self) -> bool:
+        return (
+            all(self.desired_on.values())
+            and self.suspended_by is None
+        )
+
+    async def refresh_tick(self) -> bool:
+        """Re-issue the current colour pair for late joiners.
+
+        Returns True when a frame went out. Only fully-on pairs refresh:
+        mixed or all-off pairs must not have their off halves repeated.
+        """
+        if not self.should_refresh:
+            return False
+        await self._transmit(self._fused_frame, 0)
+        self._mark_sent(self._fused_frame)
+        return True
+
+
+class ObservedHub:
+    """Room-level view of overheard MWM traffic across all receivers.
+
+    Feeds a shared EarStateTracker with every decoded frame, distinguishes
+    our own echoes from foreign commands using each pair's recent-send
+    window, and suspends repetition when something else takes control.
+    """
+
+    def __init__(self, *, clock=time.monotonic) -> None:
+        self.tracker = EarStateTracker()
+        self.pairs: list[EarPairState] = []
+        self.listeners: list = []
+        self.seen = 0
+        self.invalid = 0
+        self.last_summary = ""
+        self.last_foreign_summary = ""
+        self._clock = clock
+
+    def _notify(self) -> None:
+        for callback in self.listeners:
+            callback()
+
+    def ingest(self, frames: list[bytes]) -> None:
+        """Feed decoded frames from ANY receiver into the shared view."""
+        changed = False
+        for frame in frames:
+            ok, _ = frame_is_valid(frame)
+            if not ok:
+                self.invalid += 1
+                continue
+            desc = describe_frame(frame)
+            self.seen += 1
+            changed = True
+            self.tracker.feed_frame(frame)
+            self.last_summary = f"[{desc['kind']}] {desc['summary']}"
+            if desc["kind"] == "beacon":
+                continue  # idle sync: effect display only, no takeover
+            frame_hex = bytes(frame).hex().upper()
+            if any(pair.matches_recent(frame_hex) for pair in self.pairs):
+                continue  # our own echo bouncing back
+            # Foreign command (wand / other transmitter): suspend repeats
+            # and adopt what we can understand of it.
+            self.last_foreign_summary = self.last_summary
+            for pair in self.pairs:
+                pair.suspend(f"foreign command: {desc['summary']}")
+        if changed:
+            self._notify()
+
+    def snapshot(self) -> str:
+        snap = self.tracker.snapshot()
+        return snap if snap else "unknown"
 
 
 class ReceiverData:
-    """Decoded-message state shared by one receiver entry's sensors."""
+    """Per-receiver-entry counters for its diagnostic sensors."""
 
     def __init__(self) -> None:
-        self.tracker = EarStateTracker()
-        self.unsubscribers: list = []
         self.listeners: list = []
         self.message_count = 0
         self.invalid_count = 0
         self.last_frames_hex = ""
         self.last_summary = ""
-        self.last_seen = None
 
-    def ingest(self, hex_parts: list[str]) -> None:
-        """Feed '+'-joined frame hex strings from one MQTT message."""
-        for part in hex_parts:
-            ok, _ = frame_is_valid(part)
+    def ingest(self, frames: list[bytes]) -> None:
+        valid_frames: list[bytes] = []
+        summaries: list[str] = []
+        for frame in frames:
+            ok, _ = frame_is_valid(frame)
             if not ok:
                 self.invalid_count += 1
                 continue
-            desc = describe_frame(part)
-            # feed_frame re-validates; call it for state tracking only on
-            # valid input so invalid traffic never perturbs assumptions.
-            self.tracker.feed_frame(part)
-            self.last_summary = (
-                f"[{desc['kind']}] {desc['summary']}"
-                if desc["kind"] != "beacon"
-                else desc["summary"]
+            valid_frames.append(frame)
+            summaries.append(describe_frame(frame)["summary"])
+        self.message_count += len(frames)
+        if valid_frames:
+            self.last_frames_hex = "+".join(
+                f.hex().upper() for f in valid_frames
             )
-        self.message_count += len(hex_parts)
-        self.last_frames_hex = "+".join(p.upper() for p in hex_parts)
-        self.last_seen = dt_util.utcnow()
-        for callback in self.listeners:
-            callback()
-
-    def snapshot(self) -> str:
-        return self.tracker.snapshot()
+            self.last_summary = "; ".join(summaries)
+            for callback in self.listeners:
+                callback()

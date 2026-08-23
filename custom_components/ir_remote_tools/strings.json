@@ -3,20 +3,35 @@
     "step": {
       "user": {
         "title": "Add an MWM infrared endpoint",
-        "description": "Register an IR transmitter (creates ear lights) or an IR receiver (creates diagnostic sensors). Topics follow the MQTT test rig layout documented in the repository README.",
+        "description": "Register what this endpoint does. Transmitters drive the MWM ear lights through an infrared emitter; receivers turn captured IR signals into diagnostic sensors.",
         "data": {
-          "kind": "What does this device do?",
-          "name": "Name",
-          "transmit_topic": "MQTT topic to transmit on (transmitters only)",
-          "receive_topic": "MQTT topic carrying decoded messages (receivers only)"
+          "kind": "What does this endpoint do?",
+          "name": "Name"
+        }
+      },
+      "hardware": {
+        "title": "Select the infrared entity",
+        "description": "Pick the infrared emitter or receiver this endpoint is bound to.",
+        "data": {
+          "entity_id": "Infrared entity"
         }
       }
     },
-    "error": {
-      "missing_topic": "A topic is required for the selected device kind."
-    },
+    "error": {},
     "abort": {
-      "already_configured": "This endpoint is already configured."
+      "already_configured": "This binding already exists.",
+      "no_emitters": "No infrared emitter entities are available. Set up an infrared proxy (e.g. ESPHome) first.",
+      "no_receivers": "No infrared receiver entities are available. Set up an infrared receiver first."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Rename endpoint",
+        "data": {
+          "name": "Name"
+        }
+      }
     }
   }
 }
