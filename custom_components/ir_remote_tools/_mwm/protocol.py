@@ -122,6 +122,19 @@ def irsend_payload(frame: bytes) -> str:
     return ",".join([str(CARRIER_HZ), *(str(t) for t in timings)])
 
 
+def raw_timings(frame: bytes) -> list[int]:
+    """Signed-microsecond runs in the HA infrared framework convention.
+
+    Positive values are marks (carrier on), negative values spaces,
+    strictly alternating, ending with the inter-command gap space. This is
+    the format expected by InfraredCommand.get_raw_timings().
+    """
+    return [
+        value if index % 2 == 0 else -value
+        for index, value in enumerate(timings_for_frame(frame))
+    ]
+
+
 def parse_frame_hex(text: str) -> list[bytes]:
     """Split a '+'-joined hex sequence into individual frames."""
     frames = []

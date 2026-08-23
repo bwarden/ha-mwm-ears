@@ -23,8 +23,11 @@ from .protocol import (
     frame_is_valid,
     irsend_payload,
     parse_frame_hex,
+    raw_timings,
     timings_for_frame,
 )
+from .timings import decode_timings
+from .command import MwmCommand
 from .decode import (
     EFFECT_LABELS,
     EarStateTracker,
@@ -44,7 +47,10 @@ __all__ = [
     "frame_is_valid",
     "irsend_payload",
     "parse_frame_hex",
+    "raw_timings",
     "timings_for_frame",
+    "decode_timings",
+    "MwmCommand",
     "PALETTE",
     "SIMPLE_COLORS",
     "SIMPLE_COLOR_CODES",
