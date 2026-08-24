@@ -126,9 +126,22 @@ class EarPairState:
 
     # -- commands ---------------------------------------------------------
 
-    @property
-    def _fused_frame(self) -> bytes:
-        return build_frame([self.codes[LEFT], self.codes[RIGHT]])
+    def _state_frames(self) -> list[bytes]:
+        """Verified-form frames expressing the current pair state.
+
+        Equal pairs use the canonical one-byte simple forms (`90 6X`,
+        including the both-off keep-alive `90 60`); differing pairs use the
+        rig-verified fused phrase (`91 left right`, cf.
+        samples/mwm-gwts-colors.tsv). Unverified combinations never go out.
+        """
+        left, right = self.codes[LEFT], self.codes[RIGHT]
+        if left == right:
+            return [build_frame([left])]
+        return [build_frame([left, right])]
+
+    async def _send_state(self, repeat_count: int) -> None:
+        for frame in self._state_frames():
+            await self._send(frame, repeat_count)
 
     async def _send(self, frame: bytes, repeat_count: int) -> None:
         await self._transmit(frame, repeat_count)
@@ -144,7 +157,7 @@ class EarPairState:
         if code != EAR_OFF_CODE:
             self.last_simple[side] = code
         self.resume()
-        await self._send(self._fused_frame, BURST_REPEATS)
+        await self._send_state(BURST_REPEATS)
 
     async def apply_palette(self, index: int) -> None:
         """Apply a palette shade to both ears (no verified per-ear form)."""
@@ -194,7 +207,7 @@ class EarPairState:
         if not any(self.desired_on.values()):
             self.running_effect = None
         self.resume()
-        await self._send(self._fused_frame, BURST_REPEATS)
+        await self._send_state(BURST_REPEATS)
 
     # -- periodic refresh --------------------------------------------------
 
@@ -213,8 +226,9 @@ class EarPairState:
         """
         if not self.should_refresh:
             return False
-        await self._transmit(self._fused_frame, 0)
-        self._mark_sent(self._fused_frame)
+        for frame in self._state_frames():
+            await self._transmit(frame, 0)
+            self._mark_sent(frame)
         return True
 
 

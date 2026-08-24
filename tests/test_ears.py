@@ -114,8 +114,8 @@ class OffSemanticsTests(unittest.TestCase):
         run(h.pair.turn_off_side("left"))
         self.assertFalse(h.pair.should_refresh)
         self.assertFalse(run(h.pair.refresh_tick()))
-        off_sends = [c for c in h.calls if bytes.fromhex(c[0])[1] == 0x60
-                     and bytes.fromhex(c[0])[2] == 0x60]
+        off_sends = [c for c in h.calls
+                     if bytes.fromhex(c[0])[:2] == b"\x90\x60"]
         self.assertEqual(len(off_sends), 1)
 
     def test_mixed_pair_does_not_repeat(self):
@@ -125,6 +125,32 @@ class OffSemanticsTests(unittest.TestCase):
         run(h.pair.apply_simple("right", 0x60))
         self.assertFalse(h.pair.should_refresh)
         self.assertFalse(run(h.pair.refresh_tick()))
+
+    def test_equal_pair_uses_canonical_single_byte_form(self):
+        h = Harness()
+        run(h.pair.apply_simple("left", 0x67))
+        run(h.pair.apply_simple("right", 0x67))  # now equal -> 90 67
+        frame = bytes.fromhex(h.calls[-1][0])
+        self.assertEqual(len(frame), 3)
+        self.assertEqual(frame[:2], b"\x90\x67")
+
+    def test_both_off_burst_is_canonical_keepalive_form(self):
+        h = Harness()
+        run(h.pair.apply_simple("left", 0x64))
+        run(h.pair.turn_off_side("left"))       # both dark -> 90 60 A6
+        frame = bytes.fromhex(h.calls[-1][0])
+        self.assertEqual(bytes(frame), build_frame([0x60]))
+        self.assertEqual(frame.hex().upper(), "9060A6")
+
+    def test_refresh_reissues_current_canonical_form(self):
+        h = Harness()
+        run(h.pair.apply_simple("left", 0x64))
+        run(h.pair.apply_simple("right", 0x64))  # equal pair, refreshable
+        before = len(h.calls)
+        self.assertTrue(run(h.pair.refresh_tick()))
+        frame = bytes.fromhex(h.calls[-1][0])
+        self.assertEqual(len(h.calls), before + 1)
+        self.assertEqual(frame[:2], b"\x90\x64")
 
     def test_turning_off_already_dark_ear_sends_nothing(self):
         h = Harness()
