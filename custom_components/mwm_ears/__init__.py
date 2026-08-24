@@ -37,7 +37,12 @@ from .const import (
     HUB_KEY,
     REPEAT_GAP_S,
 )
-from .ears import EarPairState, ObservedHub, ReceiverData
+from .ears import (
+    EarPairState,
+    ObservedHub,
+    ReceiverData,
+    extract_timing_candidates,
+)
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -55,18 +60,20 @@ def _make_signal_handler(receiver: ReceiverData, hub: ObservedHub):
 
     @callback
     def handler(signal) -> None:
-        timings = list(getattr(signal, "timings", None) or [])
-        if not timings:
-            return
-        try:
-            frames = decode_timings(timings)
-        except (ValueError, TypeError):
-            _LOGGER.debug("undecodable IR signal on %s", getattr(signal, "modulation", "?"))
-            return
-        if not frames:
-            return  # not MWM (or not decodable); hub counters stay clean
-        receiver.ingest(frames)
-        hub.ingest(frames)
+        candidates = extract_timing_candidates(signal)
+        receiver.note_signal(signal, candidates)
+        frames_out: list[bytes] = []
+        for timings in candidates:
+            try:
+                frames = decode_timings(timings)
+            except (ValueError, TypeError):
+                continue
+            if frames:
+                frames_out.extend(frames)
+        if not frames_out:
+            return  # census kept the evidence; nothing MWM-shaped here
+        receiver.ingest(frames_out)
+        hub.ingest(frames_out)
 
     return handler
 

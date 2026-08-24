@@ -109,6 +109,8 @@ class MwmPhraseSensor(_ReceiverSensor):
             "all_frames": receiver.last_frames_hex or None,
             "messages_seen": receiver.message_count,
             "invalid_frames": receiver.invalid_count,
+            "signals_seen": receiver.signals_seen,
+            "last_signal": receiver.last_signal_debug,
         }
 
 

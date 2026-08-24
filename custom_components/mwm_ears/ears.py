@@ -428,6 +428,52 @@ class EarPairState:
         return True
 
 
+def extract_timing_candidates(payload) -> list[list[int]]:
+    """Pull every plausible raw-timing sequence out of a signal payload.
+
+    The infrared framework's signal objects have grown fields over time
+    (timings / raw_timings / raw / ...), and MQTT-template bridges
+    sometimes leak non-numeric junk (Tasmota's compact letter codes)
+    into otherwise numeric lists. Returns one cleaned list per source
+    attribute found, in priority order.
+    """
+    sources: list = []
+    if isinstance(payload, dict):
+        getter = payload.get
+        keys = payload.keys()
+    else:
+        getter = lambda name, _default=None: getattr(  # noqa: E731
+            payload, name, _default
+        )
+        keys = dir(payload)
+    for name in ("timings", "raw_timings", "raw", "levels"):
+        value = getter(name)
+        if isinstance(value, (list, tuple)):
+            sources.append(list(value))
+    cleaned: list[list[int]] = []
+    for src in sources:
+        nums: list[int] = []
+        for item in src:
+            if isinstance(item, bool):
+                continue
+            if isinstance(item, (int, float)):
+                nums.append(int(item))
+            elif isinstance(item, str):
+                # Tolerate "+415", "-380", "415"; silently drop letter
+                # tokens such as Tasmota's compact repeat codes ("dC").
+                try:
+                    nums.append(int(float(item.strip())))
+                except ValueError:
+                    continue
+        if nums:
+            # Same capture often surfaces under several attribute names;
+            # keep the first occurrence only so frames aren't ingested
+            # twice from one signal.
+            if nums not in cleaned:
+                cleaned.append(nums)
+    return cleaned
+
+
 class ObservedHub:
     """Room-level view of overheard MWM traffic across all receivers.
 
@@ -497,11 +543,27 @@ class ReceiverData:
         self.listeners: list = []
         self.message_count = 0
         self.invalid_count = 0
+        self.signals_seen = 0
+        self.last_signal_debug: dict | None = None
         self.last_is_bundle = False
         self.last_phrase_hex: str | None = None
         self.last_companion_hex: str | None = None
         self.last_frames_hex = ""
         self.last_summary = ""
+
+    def note_signal(self, payload, candidates: list[list[int]]) -> None:
+        """Census one received signal regardless of decodability."""
+        self.signals_seen += 1
+        self.last_signal_debug = {
+            "payload_type": type(payload).__name__,
+            "attributes": (
+                sorted(k for k in vars(payload))  # instance attrs only
+                if hasattr(payload, "__dict__") else
+                sorted(payload.keys()) if isinstance(payload, dict) else None
+            ),
+            "candidate_lengths": [len(c) for c in candidates],
+            "head": candidates[0][:6] if candidates else None,
+        }
 
     def ingest(self, frames: list[bytes]) -> None:
         valid_frames: list[bytes] = []
