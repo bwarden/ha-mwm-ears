@@ -241,12 +241,24 @@ def describe_bundle(frames: list[bytes]) -> dict | None:
     """Recognise an A-B-A' command bundle (doc section 3).
 
     Wands, paintbrushes and ears transmit every command three times:
-    [phrase][companion][phrase]. First and third are identical; the middle
-    one is a parameter block for the effect named by its embedded `48 XX`
-    (cycle durations `58 tt`, scalers `D0 42 tt`, palette refs `0E xx`,
-    clock writes `0C t`). Returns None unless the pattern matches exactly.
+    [phrase][companion][phrase]. First and third carry the same command;
+    real hardware mutates a rolling counter near the phrase tail (re-CRCing
+    the frame -- rig captures show e.g. ...A200D0 vs ...A2B300), so A and A'
+    must match in length, header, and body while the final counter+CRC pair
+    may differ. The middle message is a parameter block for the effect named
+    by its embedded `48 XX` (cycle durations `58 tt`, scalers `D0 42 tt`,
+    palette refs `0E xx`, clock writes `0C t`). Returns None otherwise.
     """
-    if len(frames) != 3 or frames[0] != frames[2] or frames[0] == frames[1]:
+    if len(frames) != 3 or frames[0] == frames[1]:
+        return None
+    first, third = frames[0], frames[2]
+    if len(first) != len(third) or first[0] != third[0]:
+        return None
+    # Long phrases may differ in the trailing counter+CRC pair (rolling
+    # tick on real hardware); short ones have no counter, so they must
+    # match outright.
+    tail = -2 if len(first) >= 5 else None
+    if first[:tail] != third[:tail]:
         return None
     phrase, companion = frames[0], frames[1]
     body = companion[1:-1]

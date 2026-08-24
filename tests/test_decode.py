@@ -193,6 +193,30 @@ class BundleTests(unittest.TestCase):
         self.assertIn("special cycle arg", out["summary"])   # 58 F0
         self.assertIn("cycle scale 10 x 200 ms", out["summary"])
 
+    def test_bundle_detected_with_rolling_counter_tail(self):
+        """Real rigs mutate a counter byte (+CRC) between A and A'."""
+        base = bytes.fromhex("961908091272A2")
+        phrase_a = build_frame(base + bytes([0x00]))
+        phrase_a2 = build_frame(base + bytes([0xB3]))
+        companion = build_frame(bytes([0x24, 0x0C, 0x72]))
+        out = describe_bundle([phrase_a, companion, phrase_a2])
+        self.assertIsNotNone(out)
+        self.assertEqual(out["kind"], "bundle")
+        self.assertEqual(out["phrase_hex"], phrase_a.hex().upper())
+
+    def test_short_phrases_still_require_exact_match(self):
+        """Tail exemption must not fuse distinct short colour commands."""
+        off = build_frame([0x60])          # canonical 90 60 A6
+        blue = build_frame([0x61])
+        self.assertIsNone(describe_bundle([off, blue, blue]))
+
+    def test_identical_short_triple_is_a_bundle(self):
+        phrase = build_frame([0x60])
+        companion = build_frame([0x24, 0x58, 0xF0])
+        out = describe_bundle([phrase, companion, phrase])
+        self.assertIsNotNone(out)
+        self.assertEqual(out["companion_hex"], companion.hex().upper())
+
     def test_rejects_non_bundles(self):
         a = build_frame([0x60])
         b = build_frame([0x61])
