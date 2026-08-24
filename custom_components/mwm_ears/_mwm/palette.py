@@ -59,10 +59,35 @@ PALETTE: dict[int, tuple[str, tuple[int, int, int]]] = {
 }
 
 
-def _distance(a: tuple[int, int, int], b: tuple[int, int, int]) -> float:
-    """Perceptually weighted RGB distance."""
-    rm, gm, bm = a[0] - b[0], a[1] - b[1], a[2] - b[2]
-    return (2 * rm * rm) + (4 * gm * gm) + (3 * bm * bm)
+def _hsv(rgb: tuple[int, int, int]) -> tuple[float, float, float]:
+    import colorsys
+
+    r, g, b = (v / 255.0 for v in rgb)
+    h, s_, v = colorsys.rgb_to_hsv(r, g, b)
+    return h * 360.0, s_, v
+
+
+def _snap_cost(
+    target: tuple[int, int, int], cand: tuple[int, int, int]
+) -> float:
+    """Perceptual snap cost: HUE dominates, saturation next, value last.
+
+    Plain RGB distance sent dark/muted requests to wildly different
+    hues (brown -> orange, grey-blue -> cyan) because every reachable
+    ear shade is bright and saturated. Users read wrong hue as "far
+    away"; brightness differences are tolerated far more.
+    """
+    th, ts, tv = _hsv(target)
+    ch, cs, cv = _hsv(cand)
+    dh = abs(th - ch)
+    if dh > 180.0:
+        dh = 360.0 - dh
+    hue_term = (dh / 180.0) ** 2 * 100.0
+    # Hue is meaningless near the grey axis -- let saturation match rule.
+    hue_weight = min(ts, cs)
+    sat_term = (ts - cs) ** 2 * 30.0
+    val_term = (tv - cv) ** 2 * 20.0
+    return hue_weight * hue_term + sat_term + val_term
 
 
 def nearest_entry(
@@ -74,12 +99,12 @@ def nearest_entry(
     win ties because they can be set per-ear (coordinating the both-ears
     and right-only primitives).
     """
-    # Sort by distance, preferring simple colors on ties (they are set
-    # per-ear via composed primitives); code breaks remaining ties.
+    # Prefer simple colors on cost ties (they are set per-ear via composed
+    # primitives); code breaks any remaining tie deterministically.
     candidates: list[tuple[float, int, int]] = []
     for code, (_, ref) in SIMPLE_COLORS.items():
-        candidates.append((_distance(rgb, ref), 0, code))
+        candidates.append((_snap_cost(rgb, ref), 0, code))
     for index, (_, ref) in PALETTE.items():
-        candidates.append((_distance(rgb, ref), 1, index))
+        candidates.append((_snap_cost(rgb, ref), 1, index))
     preference, code = min(candidates)[1:]
     return ("simple" if preference == 0 else "palette"), code

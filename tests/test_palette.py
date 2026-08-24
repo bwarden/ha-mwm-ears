@@ -28,6 +28,35 @@ class TableTests(unittest.TestCase):
         self.assertEqual(max(PALETTE), 0x1C)
 
 
+class SnapQualityTests(unittest.TestCase):
+    """Hue-dominant snapping: perceptual 'far away' means wrong hue."""
+
+    @staticmethod
+    def _hue(rgb):
+        import colorsys
+
+        r, g, b = (v / 255 for v in rgb)
+        return colorsys.rgb_to_hsv(r, g, b)[0] * 360
+
+    def test_dark_muted_requests_keep_their_hue(self):
+        # RGB-distance sent brown to blazing yellow-green etc.; users
+        # forgive brightness drift, never hue drift.
+        for target in ((139, 69, 19),   # brown
+                       (128, 0, 32),    # maroon
+                       (128, 128, 0)):  # olive
+            kind, code = nearest_entry(target)
+            table = SIMPLE_COLORS if kind == "simple" else PALETTE
+            delta = abs(self._hue(target) - self._hue(table[code][1]))
+            delta = min(delta, 360 - delta)
+            self.assertLessEqual(delta, 15.0, f"{target} lost its hue")
+
+    def test_grey_lands_on_white_not_a_pale_tint(self):
+        self.assertEqual(nearest_entry((128, 128, 128)), ("palette", 0x1C))
+
+    def test_saturated_teal_stays_cyan(self):
+        self.assertEqual(nearest_entry((0, 128, 128)), ("simple", 0x63))
+
+
 class NearestTests(unittest.TestCase):
     def test_pure_red_snaps_to_simple_red(self):
         # Exact simple red ties palette 0x15; simple wins ties because
