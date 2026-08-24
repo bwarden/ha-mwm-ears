@@ -46,8 +46,11 @@ class ApplyTests(unittest.TestCase):
     def test_initial_send_is_multi_burst(self):
         h = Harness()
         run(h.pair.apply_simple("left", 0x64))
-        self.assertEqual(len(h.calls), 1)
-        frame_hex, repeats = h.calls[0]
+        self.assertEqual(len(h.calls), 2)          # override + colour
+        reset_hex, reset_repeats = h.calls[0]
+        self.assertEqual(reset_repeats, 0)
+        self.assertEqual(bytes.fromhex(reset_hex)[1], 0x24)
+        frame_hex, repeats = h.calls[1]
         self.assertEqual(repeats, ears.BURST_REPEATS)
         # Fused phrase carries left=red and right=off.
         frame = bytes.fromhex(frame_hex)
@@ -59,14 +62,14 @@ class ApplyTests(unittest.TestCase):
         run(h.pair.apply_simple("left", 0x61))
         h.calls.clear()
         run(h.pair.apply_simple("right", 0x66))
-        frame = bytes.fromhex(h.calls[0][0])
+        frame = bytes.fromhex(h.calls[-1][0])
         self.assertEqual(frame[1], 0x61)  # left kept
         self.assertEqual(frame[2], 0x66)  # right updated
 
     def test_palette_template_frame_shape(self):
         h = Harness()
         run(h.pair.apply_palette(0x0E))
-        frame = bytes.fromhex(h.calls[0][0])
+        frame = bytes.fromhex(h.calls[-1][0])
         # header 19 07 0F 16 pp 18 04 crc
         self.assertEqual(len(frame), 9)
         self.assertEqual(frame[1:6], bytes([0x19, 0x07, 0x0F, 0x16, 0x0E]))
@@ -96,7 +99,7 @@ class TurnOnRestoreTests(unittest.TestCase):
         self.assertEqual(sent, 0x64)
         frame = bytes.fromhex(h.calls[-1][0])
         self.assertEqual(frame[1], 0x64)
-        self.assertEqual(len(h.calls), before + 1)  # bare on really transmits
+        self.assertEqual(len(h.calls), before + 2)  # override + colour
 
     def test_sides_remember_independently(self):
         h = Harness()
@@ -188,6 +191,19 @@ class OffSemanticsTests(unittest.TestCase):
         self.assertFalse(h.pair.should_refresh)
         run(h.pair.refresh_tick())
         self.assertEqual(len(h.calls), before)
+
+    def test_colour_writes_carry_leading_override_and_off_does_not(self):
+        h = Harness()
+        run(h.pair.apply_simple("left", 0x61))
+        self.assertEqual(bytes.fromhex(h.calls[0][0])[1], 0x24)
+        run(h.pair.apply_palette(0x03))
+        idx = next(i for i, c in enumerate(h.calls)
+                   if c[0].startswith("96"))
+        self.assertEqual(bytes.fromhex(h.calls[idx - 1][0])[1], 0x24)
+        before = len(h.calls)
+        run(h.pair.turn_off_side("left"))
+        for hex_frame, _rc in h.calls[before:]:
+            self.assertNotEqual(bytes.fromhex(hex_frame)[1], 0x24)
 
     def test_refresh_requires_both_sides_actually_coloured(self):
         h = Harness()

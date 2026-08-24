@@ -37,6 +37,7 @@ LEFT = "left"
 RIGHT = "right"
 
 EAR_OFF_CODE = 0x60
+RESET_OPCODE = 0x24   # flow-control override (doc section 4)
 DEFAULT_COLOR_CODE = 0x67  # white
 
 # Rig-verified palette template (samples/mwm-gwts-colors.tsv rows
@@ -148,8 +149,20 @@ class EarPairState:
         self._mark_sent(frame)
         self._notify()
 
+    async def _send_color_reset(self) -> None:
+        """Emit the standalone `24` override phrase.
+
+        Doc section 4: opcode 24 lets following opcodes take effect while a
+        built-in effect runs, and is REQUIRED to switch away from some of
+        them -- rig session showed correct colour phrases being ignored by
+        ears cycling demo effects until overridden. Sent once, un-repeated;
+        the brief black dip is the documented price of escape.
+        """
+        await self._send(build_frame([RESET_OPCODE]), 0)
+
     async def apply_simple(self, side: str, code: int) -> None:
         """Set one ear's simple color (0x60 off .. 0x67 white), fused."""
+        await self._send_color_reset()
         self.palette_index = None
         self.running_effect = None
         self.codes[side] = code
@@ -161,6 +174,7 @@ class EarPairState:
 
     async def apply_palette(self, index: int) -> None:
         """Apply a palette shade to both ears (no verified per-ear form)."""
+        await self._send_color_reset()
         self.palette_index = index
         self.running_effect = None
         self.desired_on = {LEFT: True, RIGHT: True}
