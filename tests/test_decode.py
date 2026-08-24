@@ -188,6 +188,8 @@ class BundleTests(unittest.TestCase):
         self.assertIsNotNone(out)
         self.assertEqual(out["kind"], "bundle")
         self.assertIn("pulse", out["summary"].lower())
+        self.assertEqual(out["phrase_hex"], phrase.hex().upper())
+        self.assertEqual(out["companion_hex"], companion.hex().upper())
         self.assertIn("special cycle arg", out["summary"])   # 58 F0
         self.assertIn("cycle scale 10 x 200 ms", out["summary"])
 

@@ -275,6 +275,8 @@ def describe_bundle(frames: list[bytes]) -> dict | None:
             i += 1
     return {
         "kind": "bundle",
+        "phrase_hex": phrase.hex().upper(),
+        "companion_hex": companion.hex().upper(),
         "summary": (
             f"A-B-A' bundle: {describe_frame(phrase)['summary']} "
             f"[parameters: {'; '.join(parts) if parts else 'opaque companion'}]"

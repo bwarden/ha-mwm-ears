@@ -292,6 +292,21 @@ class HubHarness(Harness):
 
 
 class ReceiverDataTests(unittest.TestCase):
+    def test_bundle_parts_stored_separately(self):
+        rd = ears.ReceiverData()
+        phrase = build_frame([0x61, 0x6A])
+        companion = build_frame([0x24, 0x58, 0xF0, 0x48, 0x04])
+        rd.ingest([phrase, companion, phrase])
+        self.assertTrue(rd.last_is_bundle)
+        self.assertEqual(rd.last_phrase_hex, phrase.hex().upper())
+        self.assertEqual(rd.last_companion_hex, companion.hex().upper())
+        # non-bundle capture clears the stale companion
+        single = build_frame([0x60])
+        rd.ingest([single])
+        self.assertFalse(rd.last_is_bundle)
+        self.assertIsNone(rd.last_companion_hex)
+        self.assertEqual(rd.last_phrase_hex, single.hex().upper())
+
     def test_counts_valid_and_invalid(self):
         rd = ears.ReceiverData()
         seen = []

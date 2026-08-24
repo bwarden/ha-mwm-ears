@@ -298,6 +298,8 @@ class ReceiverData:
         self.message_count = 0
         self.invalid_count = 0
         self.last_is_bundle = False
+        self.last_phrase_hex: str | None = None
+        self.last_companion_hex: str | None = None
         self.last_frames_hex = ""
         self.last_summary = ""
 
@@ -317,9 +319,19 @@ class ReceiverData:
                 f.hex().upper() for f in valid_frames
             )
             # Wand/ear commands arrive as [phrase][companion][phrase];
-            # report that as ONE logical command instead of three lines.
+            # report that as ONE logical command instead of three lines,
+            # keeping the A (phrase) and B (companion) parts separately
+            # visible -- A' is omitted when identical to A.
             bundle = describe_bundle(valid_frames)
             self.last_is_bundle = bundle is not None
+            if bundle:
+                self.last_phrase_hex = bundle["phrase_hex"]
+                self.last_companion_hex = bundle["companion_hex"]
+            else:
+                self.last_phrase_hex = "+".join(
+                    f.hex().upper() for f in valid_frames
+                )
+                self.last_companion_hex = None
             self.last_summary = (
                 bundle["summary"] if bundle else "; ".join(summaries)
             )

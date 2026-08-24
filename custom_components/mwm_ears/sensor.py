@@ -37,7 +37,8 @@ async def async_setup_entry(
         return  # this instance has no receiver half
     async_add_entities(
         [
-            MwmLastMessageSensor(receiver, entry),
+            MwmPhraseSensor(receiver, entry),
+            MwmCompanionSensor(receiver, entry),
             MwmAssumedStateSensor(hub, entry),
             MwmMessageCountSensor(receiver, entry),
         ]
@@ -72,8 +73,11 @@ class _ReceiverSensor(SensorEntity):
             pass
 
 
-class MwmLastMessageSensor(_ReceiverSensor):
-    """Raw hex of the most recent MWM message and its interpretation."""
+class MwmPhraseSensor(_ReceiverSensor):
+    """Message A of the most recent capture (the command phrase itself).
+
+    For non-bundle captures this is simply the whole capture.
+    """
 
     _attr_icon = "mdi:message-text-lock-outline"
 
@@ -84,23 +88,46 @@ class MwmLastMessageSensor(_ReceiverSensor):
 
     @property
     def unique_id(self) -> str:
-        return f"{self._base_id}-last-message"
+        return f"{self._base_id}-last-phrase"
 
     @property
     def native_value(self) -> str | None:
-        frames = self._receiver.last_frames_hex.split("+")
-        return frames[0] if frames and frames[0] else None
+        return self._receiver.last_phrase_hex
 
     @property
     def extra_state_attributes(self) -> dict:
         receiver = self._receiver
         return {
             "source": self._ir_entity_id,
-            "frames": receiver.last_frames_hex or None,
+            "is_bundle": receiver.last_is_bundle,
             "interpretation": receiver.last_summary or None,
+            "all_frames": receiver.last_frames_hex or None,
             "messages_seen": receiver.message_count,
             "invalid_frames": receiver.invalid_count,
         }
+
+
+class MwmCompanionSensor(_ReceiverSensor):
+    """Message B of the most recent A-B-A' bundle (parameter block).
+
+    State is none unless the last capture actually was a bundle; A'
+    duplicates A and is deliberately not reported.
+    """
+
+    _attr_icon = "mdi:tune-vertical"
+
+    def __init__(self, receiver: ReceiverData, entry: ConfigEntry) -> None:
+        super().__init__(entry)
+        self._receiver = receiver
+        self._bind(receiver.listeners)
+
+    @property
+    def unique_id(self) -> str:
+        return f"{self._base_id}-last-companion"
+
+    @property
+    def native_value(self) -> str | None:
+        return self._receiver.last_companion_hex
 
 
 class MwmAssumedStateSensor(_ReceiverSensor):
