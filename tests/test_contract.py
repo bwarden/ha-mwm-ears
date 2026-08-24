@@ -66,3 +66,18 @@ class BootReadinessContract(unittest.TestCase):
             r"ConfigEntryNotReady",
             "runtime dict must be stored only AFTER the readiness gate",
         )
+
+
+class EntityNamingContract(unittest.TestCase):
+    def test_every_sensor_class_has_a_descriptive_name(self):
+        src = _read("sensor.py")
+        classes = re.findall(r"^class (Mwm\w+)\(", src, re.M)
+        self.assertEqual(
+            len(classes), 4,
+            f"unexpected sensor class list: {classes}",
+        )
+        for cls in classes:
+            body = re.search(
+                rf"class {cls}\([\s\S]*?(?=\nclass |\Z)", src
+            ).group(0)
+            self.assertIn("def name(self)", body, f"{cls} lacks a name")

@@ -58,6 +58,7 @@ class _ReceiverSensor(SensorEntity):
             model="MWM/GWTS infrared room controller",
         )
         self._base_id = entry.entry_id
+        self._room = entry.data["name"]
         self._ir_entity_id = entry.data[CONF_RECEIVER_ENTITY]
 
     def _bind(self, listeners: list) -> None:
@@ -89,6 +90,10 @@ class MwmPhraseSensor(_ReceiverSensor):
     @property
     def unique_id(self) -> str:
         return f"{self._base_id}-last-phrase"
+
+    @property
+    def name(self) -> str:
+        return f"{self._room} Last Phrase"
 
     @property
     def native_value(self) -> str | None:
@@ -126,6 +131,10 @@ class MwmCompanionSensor(_ReceiverSensor):
         return f"{self._base_id}-last-companion"
 
     @property
+    def name(self) -> str:
+        return f"{self._room} Last Companion"
+
+    @property
     def native_value(self) -> str | None:
         return self._receiver.last_companion_hex
 
@@ -147,6 +156,10 @@ class MwmAssumedStateSensor(_ReceiverSensor):
     @property
     def unique_id(self) -> str:
         return f"{self._base_id}-assumed-state"
+
+    @property
+    def name(self) -> str:
+        return f"{self._room} Assumed Ear State"
 
     @property
     def native_value(self) -> str:
@@ -182,6 +195,10 @@ class MwmMessageCountSensor(_ReceiverSensor):
     @property
     def unique_id(self) -> str:
         return f"{self._base_id}-message-count"
+
+    @property
+    def name(self) -> str:
+        return f"{self._room} Message Count"
 
     @property
     def native_value(self) -> int:
