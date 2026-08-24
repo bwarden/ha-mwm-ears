@@ -9,6 +9,7 @@ import unittest
 from mwm.decode import (
     EarStateTracker,
     describe_55aa,
+    describe_bundle,
     describe_content,
     describe_frame,
     effect_label,
@@ -173,3 +174,27 @@ class TrackerTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class BundleTests(unittest.TestCase):
+    """A-B-A' wand/ear command bundles (doc section 3)."""
+
+    def test_recognises_phrase_companion_phrase(self):
+        phrase = build_frame([0x61, 0x6A])          # fused blue/green
+        companion = build_frame(                    # pulse w/ cycle params
+            [0x24, 0x58, 0xF0, 0x48, 0x04, 0xD0, 0x42, 0x0A]
+        )
+        out = describe_bundle([phrase, companion, phrase])
+        self.assertIsNotNone(out)
+        self.assertEqual(out["kind"], "bundle")
+        self.assertIn("pulse", out["summary"].lower())
+        self.assertIn("special cycle arg", out["summary"])   # 58 F0
+        self.assertIn("cycle scale 10 x 200 ms", out["summary"])
+
+    def test_rejects_non_bundles(self):
+        a = build_frame([0x60])
+        b = build_frame([0x61])
+        self.assertIsNone(describe_bundle([a]))
+        self.assertIsNone(describe_bundle([a, b]))
+        self.assertIsNone(describe_bundle([a, a, a]))   # all identical
+        self.assertIsNone(describe_bundle([a, b, b]))   # A' mismatch

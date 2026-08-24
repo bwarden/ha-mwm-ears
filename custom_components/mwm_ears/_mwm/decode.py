@@ -237,6 +237,51 @@ def describe_55aa(data: bytes) -> dict:
     }
 
 
+def describe_bundle(frames: list[bytes]) -> dict | None:
+    """Recognise an A-B-A' command bundle (doc section 3).
+
+    Wands, paintbrushes and ears transmit every command three times:
+    [phrase][companion][phrase]. First and third are identical; the middle
+    one is a parameter block for the effect named by its embedded `48 XX`
+    (cycle durations `58 tt`, scalers `D0 42 tt`, palette refs `0E xx`,
+    clock writes `0C t`). Returns None unless the pattern matches exactly.
+    """
+    if len(frames) != 3 or frames[0] != frames[2] or frames[0] == frames[1]:
+        return None
+    phrase, companion = frames[0], frames[1]
+    body = companion[1:-1]
+    parts: list[str] = []
+    i = 0
+    while i < len(body) - 1:
+        op = body[i]
+        if op == 0x48:
+            parts.append(f"effect: {effect_label(body[i + 1])}")
+            i += 2
+        elif op == 0x58:
+            tt = body[i + 1]
+            parts.append(
+                "special cycle arg"
+                if tt in (0xEE, 0xF0)
+                else f"cycle ~{tt * 100} ms"
+            )
+            i += 2
+        elif op == 0xD0 and i + 2 < len(body) and body[i + 1] == 0x42:
+            parts.append(f"cycle scale {body[i + 2]} x 200 ms")
+            i += 3
+        elif op == 0x0C:
+            parts.append(f"clock tick 0x{body[i + 1]:02X}")
+            i += 2
+        else:
+            i += 1
+    return {
+        "kind": "bundle",
+        "summary": (
+            f"A-B-A' bundle: {describe_frame(phrase)['summary']} "
+            f"[parameters: {'; '.join(parts) if parts else 'opaque companion'}]"
+        ),
+    }
+
+
 def describe_frame(frame: str | bytes) -> dict:
     """Validate and describe one complete MWM frame (hex or bytes)."""
     from .protocol import frame_is_valid

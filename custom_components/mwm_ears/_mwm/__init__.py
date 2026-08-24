@@ -33,6 +33,7 @@ from .decode import (
     EarStateTracker,
     describe_55aa,
     describe_content,
+    describe_bundle,
     describe_frame,
     effect_label,
 )
@@ -60,6 +61,7 @@ __all__ = [
     "EarStateTracker",
     "describe_55aa",
     "describe_content",
+    "describe_bundle",
     "describe_frame",
     "effect_label",
 ]

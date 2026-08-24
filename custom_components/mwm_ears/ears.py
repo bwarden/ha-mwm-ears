@@ -17,6 +17,7 @@ if __package__:  # normal HA component context
         SIMPLE_COLORS,
         EarStateTracker,
         build_frame,
+        describe_bundle,
         describe_frame,
         frame_is_valid,
     )
@@ -27,6 +28,7 @@ else:  # standalone test harness: _bootstrap registers us as "mwm"
         SIMPLE_COLORS,
         EarStateTracker,
         build_frame,
+        describe_bundle,
         describe_frame,
         frame_is_valid,
     )
@@ -276,6 +278,7 @@ class ReceiverData:
         self.listeners: list = []
         self.message_count = 0
         self.invalid_count = 0
+        self.last_is_bundle = False
         self.last_frames_hex = ""
         self.last_summary = ""
 
@@ -294,6 +297,12 @@ class ReceiverData:
             self.last_frames_hex = "+".join(
                 f.hex().upper() for f in valid_frames
             )
-            self.last_summary = "; ".join(summaries)
+            # Wand/ear commands arrive as [phrase][companion][phrase];
+            # report that as ONE logical command instead of three lines.
+            bundle = describe_bundle(valid_frames)
+            self.last_is_bundle = bundle is not None
+            self.last_summary = (
+                bundle["summary"] if bundle else "; ".join(summaries)
+            )
             for callback in self.listeners:
                 callback()
