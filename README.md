@@ -60,7 +60,12 @@ box, which the form suggests together; either half is optional:
   - *message count*: traffic volume since start.
 
 Both halves' entities live on one Home Assistant device, whether the
-emitter and receiver are the same physical box or not. Entries created
+emitter and receiver are the same physical box or not. At startup the
+integration waits for the bound infrared entities to exist (retrying with
+backoff), so MQTT-discovered IR boxes that appear late simply delay the
+room instead of requiring a manual reload. Diagnostic sensors carry
+descriptive names (Last Phrase, Last Companion, Assumed Ear State,
+Message Count) rather than sharing the room name. Entries created
 before v0.3 (per-kind transmitter/receiver bindings) cannot migrate;
 delete and re-add them.
 
