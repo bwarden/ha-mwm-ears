@@ -40,7 +40,10 @@ box, which the form suggests together; either half is optional:
     shades use the verified both-ears template (no verified per-ear form).
     Every colour write is preceded by the standalone `24` flow-control
     override, which per the protocol doc is required to take effect while
-    a built-in program runs (cost: a momentary black dip).
+    a built-in program runs (cost: a momentary black dip). Each command
+    frame transmits 1 + N times spaced ~1.8 s apart -- ear receivers drop
+    cold single frames, and genuine wands repeat likewise (mirrors the
+    proven `ir-mwm-send` recipe).
   - Effect list invokes verified `48 XX` programs (fades, pulses, strobe,
     transitions, rotations, random, blackout). Bare toggles re-issue the
     side's last colour, defaulting to white.
