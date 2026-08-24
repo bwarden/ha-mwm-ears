@@ -53,3 +53,16 @@ class RuntimeShapeContract(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class BootReadinessContract(unittest.TestCase):
+    def test_setup_raises_not_ready_for_missing_entities(self):
+        src = _read("__init__.py")
+        self.assertIn("ConfigEntryNotReady", src)
+        self.assertRegex(src, r"_entity_ready\(hass, e\)")
+        self.assertNotRegex(
+            src,
+            r"hass\.data\[DOMAIN\]\[entry\.entry_id\] = runtime[\s\S]*?"
+            r"ConfigEntryNotReady",
+            "runtime dict must be stored only AFTER the readiness gate",
+        )

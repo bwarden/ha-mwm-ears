@@ -23,7 +23,9 @@ from datetime import timedelta
 
 from homeassistant.components import infrared
 from homeassistant.config_entries import ConfigEntry
+from homeassistant.const import STATE_UNAVAILABLE, STATE_UNKNOWN
 from homeassistant.core import HomeAssistant, callback
+from homeassistant.exceptions import ConfigEntryNotReady
 from homeassistant.helpers.event import async_track_time_interval
 
 from ._mwm import MwmCommand, decode_timings
@@ -80,13 +82,37 @@ async def async_migrate_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     return False
 
 
+def _entity_ready(hass: HomeAssistant, entity_id: str | None) -> bool:
+    """True when a bound infrared entity exists and has a usable state."""
+    if not entity_id:
+        return True
+    state = hass.states.get(entity_id)
+    return state is not None and state.state not in (
+        STATE_UNAVAILABLE,
+        STATE_UNKNOWN,
+    )
+
+
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
+    emitter_entity = entry.data.get(CONF_EMITTER_ENTITY)
+    receiver_entity = entry.data.get(CONF_RECEIVER_ENTITY)
+
+    # MQTT-discovered Tasmota IR entities often appear AFTER our entry is
+    # set up at boot. Raising NotReady makes HA retry quietly with backoff
+    # instead of binding dead entity ids until a manual reload.
+    missing = [
+        e for e in (emitter_entity, receiver_entity) if not _entity_ready(hass, e)
+    ]
+    if missing:
+        raise ConfigEntryNotReady(
+            f"infrared entities not ready yet: {', '.join(missing)}"
+        )
+
     hass.data.setdefault(DOMAIN, {})
     hub = _get_hub(hass)
     runtime: dict = {"pair": None, "rx": None}
     hass.data[DOMAIN][entry.entry_id] = runtime
 
-    emitter_entity = entry.data.get(CONF_EMITTER_ENTITY)
     if emitter_entity:
 
         async def transmit(frame: bytes, repeat_count: int) -> None:
@@ -115,7 +141,6 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
         entry.async_on_unload(_detach)
 
-    receiver_entity = entry.data.get(CONF_RECEIVER_ENTITY)
     if receiver_entity:
         receiver_data = ReceiverData()
         runtime["rx"] = receiver_data
