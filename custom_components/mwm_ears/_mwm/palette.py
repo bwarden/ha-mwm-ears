@@ -71,10 +71,11 @@ def nearest_entry(
     """Snap an RGB triple to the closest representable ear color.
 
     Returns (kind, code) where kind is "simple" or "palette". Simple colors
-    win ties because fused frames can set them per-ear.
+    win ties because they can be set per-ear (coordinating the both-ears
+    and right-only primitives).
     """
-    # Sort by distance, preferring simple colors on ties (fused frames set
-    # them per-ear); code breaks any remaining tie deterministically.
+    # Sort by distance, preferring simple colors on ties (they are set
+    # per-ear via composed primitives); code breaks remaining ties.
     candidates: list[tuple[float, int, int]] = []
     for code, (_, ref) in SIMPLE_COLORS.items():
         candidates.append((_distance(rgb, ref), 0, code))

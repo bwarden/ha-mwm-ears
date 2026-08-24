@@ -31,7 +31,7 @@ class TableTests(unittest.TestCase):
 class NearestTests(unittest.TestCase):
     def test_pure_red_snaps_to_simple_red(self):
         # Exact simple red ties palette 0x15; simple wins ties because
-        # fused frames can set it per-ear. Near-red shades legitimately
+        # composed frames can set it per-ear. Near-red shades legitimately
         # snap to measured palette entries instead.
         kind, code = nearest_entry((255, 0, 0))
         self.assertEqual((kind, code), ("simple", 0x64))

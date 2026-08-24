@@ -124,5 +124,5 @@ class EndByteRecoveryTests(unittest.TestCase):
         self.assertEqual(decode_timings(raw_timings(corrupted)), [])
 
     def test_full_length_frames_decode_normally(self):
-        f = build_frame([0x61, 0x6A])  # verified fused blue/green pair
+        f = build_frame([0x61, 0x6A])  # two-opcode colour script frame
         self.assertEqual(decode_timings(raw_timings(f)), [f])

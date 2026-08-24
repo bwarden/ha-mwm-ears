@@ -8,6 +8,7 @@ these objects to infrared emitter/receiver entities.
 
 from __future__ import annotations
 
+import asyncio
 import time
 
 if __package__:  # normal HA component context
@@ -49,11 +50,17 @@ _PALETTE_TEMPLATE_TAIL = [0x18, 0x04]
 # single frames, so commands go out BURST_REPEATS+1 times total,
 # REPEAT_GAP_S apart (mirrors wands and perl/bin/ir-mwm-send).
 BURST_REPEATS = 2
+# Seconds between grouped re-transmissions of one logical command
+# (mirrors perl ir-mwm-send's proven 2x @ ~1.8 s recipe).
+REPEAT_GAP_S = 1.8
 # Periodic re-issue cadence so late joiners sync; matches ear-hat beacon
 # pacing (~7-12 s).
 DEFAULT_REFRESH_S = 8.0
 # Transmissions newer than this count as our own echo when overheard.
 OURS_WINDOW_S = 15.0
+
+
+RIGHT_ONLY_BASE = 0x68
 
 
 class EarPairState:
@@ -63,8 +70,8 @@ class EarPairState:
 
     - user-initiated sends use repeat_count=BURST_REPEATS extra spaced
   transmissions;
-    - while BOTH ears are on, a periodic tick re-issues the current fused
-      colour phrase once so newly-powered ears join in;
+    - while BOTH ears are on, a periodic tick re-issues the current
+      composed colour pair once so newly-powered ears join in;
     - any off state is sent only as its initial burst and never repeated,
       so independently-controlled ears are left alone;
     - effect invocations are never re-issued (restarting a running program
@@ -73,8 +80,12 @@ class EarPairState:
       repetition suspends until the next explicit user action.
     """
 
-    def __init__(self, transmit, *, clock=time.monotonic) -> None:
-        self._transmit = transmit  # async (frame: bytes, repeat_count: int)
+    def __init__(
+        self, transmit, *, repeat_gap_s: float = REPEAT_GAP_S, clock=time.monotonic
+    ) -> None:
+        # async (frame: bytes, repeat_count: int)
+        self._transmit = transmit
+        self.repeat_gap_s = repeat_gap_s
         self._clock = clock
         self.codes: dict[str, int] = {LEFT: EAR_OFF_CODE, RIGHT: EAR_OFF_CODE}
         self.desired_on: dict[str, bool] = {LEFT: False, RIGHT: False}
@@ -87,7 +98,7 @@ class EarPairState:
         self.suspended_by: str | None = None
         self.refresh_interval: float = DEFAULT_REFRESH_S
         self.listeners: list = []
-        self._last_sent: tuple[str, float] | None = None
+        self._recent_sent: list[tuple[str, float]] = []
 
     # -- display ---------------------------------------------------------
 
@@ -107,15 +118,16 @@ class EarPairState:
     # -- ours-vs-foreign discrimination ----------------------------------
 
     def _mark_sent(self, frame: bytes) -> None:
-        self._last_sent = (bytes(frame).hex().upper(), self._clock())
+        # Composed commands are MULTI-frame groups; remember each frame
+        # so echoes of any member are recognised as ours.
+        self._recent_sent.append((bytes(frame).hex().upper(), self._clock()))
+        del self._recent_sent[:-16]
 
     def matches_recent(self, frame_hex: str) -> bool:
-        if not self._last_sent:
-            return False
-        hex_seen, seen_at = self._last_sent
-        return (
-            hex_seen == frame_hex.upper()
-            and self._clock() - seen_at <= OURS_WINDOW_S
+        now = self._clock()
+        return any(
+            hex_seen == frame_hex.upper() and now - seen_at <= OURS_WINDOW_S
+            for hex_seen, seen_at in reversed(self._recent_sent)
         )
 
     def suspend(self, reason: str) -> None:
@@ -133,19 +145,41 @@ class EarPairState:
     def _state_frames(self) -> list[bytes]:
         """Verified-form frames expressing the current pair state.
 
-        Equal pairs use the canonical one-byte simple forms (`90 6X`,
-        including the both-off keep-alive `90 60`); differing pairs use the
-        rig-verified fused phrase (`91 left right`, cf.
-        samples/mwm-gwts-colors.tsv). Unverified combinations never go out.
+        The protocol's simple-colour primitives target BOTH ears (`90 6X`)
+        or the RIGHT ear alone (`90 68+X`; samples/mwm-gwts-colors.tsv).
+        There is no per-side fused phrase: multi-byte phrases run their
+        opcodes in order against both ears (rig session 2026-08-23:
+        `91 62 61` -> both blue, `91 62 60` -> both dark), so an embedded
+        off byte always wins eventually. Left-ear changes are therefore a
+        COORDINATION of the two primitives:
+
+            1. `90 <left>`   -- bring both ears to the left colour,
+            2. `90 <right-only(right)>` -- restore the right ear alone.
+
+        Equal pairs need only step 1 (including canonical `90 60` off).
         """
         left, right = self.codes[LEFT], self.codes[RIGHT]
         if left == right:
             return [build_frame([left])]
-        return [build_frame([left, right])]
+        return [
+            build_frame([left]),
+            build_frame([RIGHT_ONLY_BASE + (right - EAR_OFF_CODE)]),
+        ]
 
     async def _send_state(self, repeat_count: int) -> None:
-        for frame in self._state_frames():
-            await self._send(frame, repeat_count)
+        """Transmit the composed state as ONE logical, grouped command.
+
+        The frame GROUP is what repeats: every attempt runs the full
+        sequence back-to-back (their built-in footers provide the
+        inter-message spacing), and attempts are separated by the
+        rig-proven gap so cold receivers get a warm-up pass.
+        """
+        frames = self._state_frames()
+        for attempt in range(repeat_count + 1):
+            if attempt:
+                await asyncio.sleep(self.repeat_gap_s)
+            for frame in frames:
+                await self._send(frame, 0)
 
     async def _send(self, frame: bytes, repeat_count: int) -> None:
         await self._transmit(frame, repeat_count)
@@ -164,7 +198,11 @@ class EarPairState:
         await self._send(build_frame([RESET_OPCODE]), 0)
 
     async def apply_simple(self, side: str, code: int) -> None:
-        """Set one ear's simple color (0x60 off .. 0x67 white), fused."""
+        """Set one ear's simple color (0x60 off .. 0x67 white).
+
+        The pair state is composed from verified primitives (see
+        _state_frames); never a per-side fused phrase.
+        """
         await self._send_color_reset()
         self.palette_index = None
         self.running_effect = None
@@ -207,13 +245,14 @@ class EarPairState:
         return code
 
     async def turn_off_side(self, side: str) -> None:
-        """Turn one ear off via its half of the fused phrase.
+        """Turn one ear off.
 
-        Sent as a single initial multi-burst only: refresh stays quiet
-        unless both ears are on, so off states are never re-issued.
-        Already-dark ears are a no-op with no transmission: HA fires
-        turn_off liberally (automations, area off, stale restored state)
-        and re-bursting the fused phrase here once produced surprise
+        Routes through _send_state, so the other ear keeps its colour via
+        the both+right-only composition. Sent as a grouped burst only:
+        refresh stays quiet unless both ears are on, so off states are
+        never re-issued. Already-dark ears are a no-op with no
+        transmission: HA fires turn_off liberally (automations, area off,
+        stale restored state) and re-bursting here once produced surprise
         all-off commands.
         """
         if self.codes[side] == EAR_OFF_CODE:

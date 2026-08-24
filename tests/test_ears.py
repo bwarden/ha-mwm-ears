@@ -26,7 +26,9 @@ class Harness:
     def __init__(self):
         self.now = 100.0
         self.sent: list[tuple[str, int]] = []  # (hex, repeat_count)
-        self.pair = ears.EarPairState(self._transmit, clock=lambda: self.now)
+        self.pair = ears.EarPairState(
+            self._transmit, clock=lambda: self.now, repeat_gap_s=0
+        )
 
     async def _transmit(self, frame: bytes, repeat_count: int) -> None:
         self.sent.append((frame.hex().upper(), repeat_count))
@@ -46,25 +48,33 @@ class ApplyTests(unittest.TestCase):
     def test_initial_send_is_multi_burst(self):
         h = Harness()
         run(h.pair.apply_simple("left", 0x64))
-        self.assertEqual(len(h.calls), 2)          # override + colour
+        # override once, then the composed group (both-red + right-only
+        # off-restorer) re-transmitted BURST_REPEATS+1 times.
+        self.assertEqual(len(h.calls), 1 + 2 * (ears.BURST_REPEATS + 1))
         reset_hex, reset_repeats = h.calls[0]
         self.assertEqual(reset_repeats, 0)
         self.assertEqual(bytes.fromhex(reset_hex)[1], 0x24)
-        frame_hex, repeats = h.calls[1]
-        self.assertEqual(repeats, ears.BURST_REPEATS)
-        # Fused phrase carries left=red and right=off.
-        frame = bytes.fromhex(frame_hex)
-        self.assertEqual(frame[1], 0x64)
-        self.assertEqual(frame[2], 0x60)
+        group = h.calls[1:]
+        first, second = group[0], group[1]
+        self.assertEqual(bytes.fromhex(first[0]), build_frame([0x64]))
+        self.assertEqual(
+            bytes.fromhex(second[0]), build_frame([0x68])
+        )  # right-only OFF keeps left red
+        for i, (_hexa, rc) in enumerate(group):
+            self.assertEqual(rc, 0)
+            expected = first if i % 2 == 0 else second
+            self.assertEqual(_hexa, expected[0])
 
-    def test_other_side_color_preserved_in_fused_frame(self):
+    def test_other_side_color_preserved_by_composition(self):
         h = Harness()
         run(h.pair.apply_simple("left", 0x61))
         h.calls.clear()
         run(h.pair.apply_simple("right", 0x66))
-        frame = bytes.fromhex(h.calls[-1][0])
-        self.assertEqual(frame[1], 0x61)  # left kept
-        self.assertEqual(frame[2], 0x66)  # right updated
+        # Bring BOTH ears to blue, then repaint only the right ear yellow.
+        self.assertEqual(
+            h.calls[-2:], [(build_frame([0x61]).hex().upper(), 0),
+                           (build_frame([0x6E]).hex().upper(), 0)]
+        )
 
     def test_palette_template_frame_shape(self):
         h = Harness()
@@ -87,8 +97,9 @@ class TurnOnRestoreTests(unittest.TestCase):
         h = Harness()
         sent = run(h.pair.turn_on_side("left"))
         self.assertEqual(sent, 0x67)
-        frame = bytes.fromhex(h.calls[-1][0])
+        frame = bytes.fromhex(h.calls[-2][0])
         self.assertEqual(frame[1], 0x67)
+        self.assertEqual(bytes.fromhex(h.calls[-1][0]), build_frame([0x68]))
 
     def test_restores_last_explicit_color(self):
         h = Harness()
@@ -97,9 +108,13 @@ class TurnOnRestoreTests(unittest.TestCase):
         before = len(h.calls)
         sent = run(h.pair.turn_on_side("left"))
         self.assertEqual(sent, 0x64)
-        frame = bytes.fromhex(h.calls[-1][0])
-        self.assertEqual(frame[1], 0x64)
-        self.assertEqual(len(h.calls), before + 2)  # override + colour
+        # override + composed group x3; group leads with the colour.
+        self.assertEqual(len(h.calls),
+                         before + 1 + 2 * (ears.BURST_REPEATS + 1))
+        self.assertEqual(bytes.fromhex(h.calls[before][0])[1], 0x24)
+        self.assertEqual(bytes.fromhex(h.calls[before + 1][0]),
+                         build_frame([0x64]))
+        self.assertEqual(bytes.fromhex(h.calls[-1][0]), build_frame([0x68]))
 
     def test_sides_remember_independently(self):
         h = Harness()
@@ -108,6 +123,49 @@ class TurnOnRestoreTests(unittest.TestCase):
         self.assertEqual(run(h.pair.turn_on_side("right")), 0x61)
         # right's pick must not leak into left
         self.assertNotEqual(run(h.pair.turn_on_side("left")), 0x61)
+
+
+class CompositionTests(unittest.TestCase):
+    """Per-side control = coordination of BOTH + RIGHT-only primitives."""
+
+    def test_right_only_codes_mirror_simple_codes(self):
+        # TSV rows color-X-right: exact CRCs pin the mapping 90 68..6F.
+        expected = {0x60: "906864", 0x64: "906C05",
+                    0x66: "906EB9", 0x67: "906FE7"}
+        RIGHT_ONLY_BASE, EAR_OFF_CODE = ears.RIGHT_ONLY_BASE, ears.EAR_OFF_CODE
+        for simple, hexstr in expected.items():
+            frame = build_frame([RIGHT_ONLY_BASE + simple - EAR_OFF_CODE])
+            self.assertEqual(frame.hex().upper(), hexstr)
+
+    def test_mixed_pair_composes_both_then_right_only(self):
+        RIGHT_ONLY_BASE, EAR_OFF_CODE = ears.RIGHT_ONLY_BASE, ears.EAR_OFF_CODE
+        from ears_core import LEFT, RIGHT
+        h = Harness()
+        h.pair.codes = {LEFT: 0x62, RIGHT: 0x66}
+        frames = h.pair._state_frames()
+        self.assertEqual(frames[0], build_frame([0x62]))
+        self.assertEqual(
+            frames[1], build_frame([RIGHT_ONLY_BASE + 0x66 - EAR_OFF_CODE])
+        )
+
+    def test_left_dark_right_lit_needs_all_off_then_right_only(self):
+        from ears_core import LEFT, RIGHT
+        h = Harness()
+        h.pair.codes = {LEFT: 0x60, RIGHT: 0x63}
+        frames = h.pair._state_frames()
+        self.assertEqual(frames[0], build_frame([0x60]))
+        self.assertEqual(frames[1], build_frame([0x6B]))
+
+    def test_group_repeats_preserve_frame_order(self):
+        h = Harness()
+        run(h.pair.apply_simple("left", 0x64))
+        state_calls = h.calls[1:]  # skip override
+        pattern = [c[0] for c in state_calls]
+        self.assertEqual(
+            pattern,
+            [build_frame([0x64]).hex().upper(), build_frame([0x68]).hex().upper()]
+            * (ears.BURST_REPEATS + 1),
+        )
 
 
 class OffSemanticsTests(unittest.TestCase):
@@ -119,7 +177,7 @@ class OffSemanticsTests(unittest.TestCase):
         self.assertFalse(run(h.pair.refresh_tick()))
         off_sends = [c for c in h.calls
                      if bytes.fromhex(c[0])[:2] == b"\x90\x60"]
-        self.assertEqual(len(off_sends), 1)
+        self.assertEqual(len(off_sends), ears.BURST_REPEATS + 1)
 
     def test_mixed_pair_does_not_repeat(self):
         h = Harness()
@@ -220,7 +278,8 @@ class OffSemanticsTests(unittest.TestCase):
         self.assertEqual(len(h.calls), before)
         # and an all-dark pair stays silent too
         run(h.pair.turn_off_side("left"))
-        self.assertEqual(len(h.calls), before + 1)  # only the real off burst
+        # only the real all-off group burst (no override frame)
+        self.assertEqual(len(h.calls), before + ears.BURST_REPEATS + 1)
 
     def test_fully_on_pair_repeats_once_per_tick(self):
         h = Harness()
@@ -228,9 +287,12 @@ class OffSemanticsTests(unittest.TestCase):
         run(h.pair.apply_simple("right", 0x66))
         before = len(h.calls)
         self.assertTrue(run(h.pair.refresh_tick()))
-        self.assertEqual(len(h.calls), before + 1)
+        # differing pair -> composed two-frame sequence, single pass
+        self.assertEqual(len(h.calls), before + 2)
         _, repeats = h.calls[-1]
         self.assertEqual(repeats, 0)  # single shot on refresh
+        self.assertEqual(bytes.fromhex(h.calls[-2][0]), build_frame([0x64]))
+        self.assertEqual(bytes.fromhex(h.calls[-1][0]), build_frame([0x6E]))
 
     def test_refresh_resumes_after_full_pair_back_on(self):
         h = Harness()
@@ -267,14 +329,14 @@ class SuspensionTests(unittest.TestCase):
     def test_own_echo_does_not_suspend(self):
         h = HubHarness()
         run(h.pair.apply_simple("left", 0x64))
-        echo = build_frame([h.pair.codes["left"], h.pair.codes["right"]])
+        echo = bytes.fromhex(h.calls[1][0])  # first composed state frame
         h.hub.ingest([echo])
         self.assertIsNone(h.pair.suspended_by)
 
     def test_echo_stales_into_foreign_after_window(self):
         h = HubHarness()
         run(h.pair.apply_simple("left", 0x64))
-        echo = build_frame([h.pair.codes["left"], h.pair.codes["right"]])
+        echo = bytes.fromhex(h.calls[1][0])  # first composed state frame
         h.now += ears.OURS_WINDOW_S + 1
         h.hub.ingest([echo])
         self.assertIsNotNone(h.pair.suspended_by)

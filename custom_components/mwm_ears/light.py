@@ -63,8 +63,9 @@ async def async_setup_entry(
 class MwmEarLight(LightEntity):
     """One ear of the pair driven through an infrared emitter.
 
-    Both entities control the same physical room of ears; the fused-phrase
-    path keeps their simple colors independent. Any HS colour picked in HA
+    Both entities control the same physical room of ears; composing the
+    both-ears and right-only primitives keeps their simple colors
+    independent. Any HS colour picked in HA
     snaps to the nearest representable ear shade (7 simple colours plus the
     measured 29-shade palette). Palette shades apply to both ears at once --
     a protocol limitation, noted in the entity attributes. When a foreign
@@ -129,8 +130,9 @@ class MwmEarLight(LightEntity):
             "room_state": self._hub.snapshot(),
             "note": (
                 "Palette shades apply to both ears at once; simple colors "
-                "are set per-ear via fused frames. Repeats pause while a "
-                "foreign MWM command is in charge."
+                "are set per-ear by coordinating both-ears and right-only "
+                "frames. Repeats pause while a foreign MWM command is in "
+                "charge."
             ),
         }
 

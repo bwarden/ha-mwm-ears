@@ -115,7 +115,11 @@ class FrameDescriptionTests(unittest.TestCase):
 
 
 class TrackerTests(unittest.TestCase):
-    def test_fused_sets_each_ear(self):
+    def test_colour_script_read_per_slot(self):
+        # NOTE: rig session 2026-08-23 showed multi-byte phrases EXECUTE
+        # sequentially (last opcode wins on real ears). The tracker still
+        # reads slots independently for room-state display; revisit when
+        # genuine receiver traffic clarifies who sends such phrases.
         tracker = EarStateTracker()
         tracker.feed_frame(frame_hex([0x61, 0x66]))
         self.assertEqual(tracker.snapshot(), "left blue, right yellow")
@@ -180,7 +184,7 @@ class BundleTests(unittest.TestCase):
     """A-B-A' wand/ear command bundles (doc section 3)."""
 
     def test_recognises_phrase_companion_phrase(self):
-        phrase = build_frame([0x61, 0x6A])          # fused blue/green
+        phrase = build_frame([0x61, 0x6A])          # two-opcode colour script
         companion = build_frame(                    # pulse w/ cycle params
             [0x24, 0x58, 0xF0, 0x48, 0x04, 0xD0, 0x42, 0x0A]
         )

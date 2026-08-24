@@ -65,7 +65,7 @@ class BuildFrameTests(unittest.TestCase):
 class ValidityTests(unittest.TestCase):
     def test_valid_frames(self):
         self.assertEqual(frame_is_valid("90 60 A6"), (True, ""))
-        frame = build_frame([0x61, 0x62])  # fused left-blue/right-green
+        frame = build_frame([0x61, 0x62])  # two-opcode colour script
         self.assertEqual(frame_is_valid(frame.hex()), (True, ""))
         self.assertEqual(frame_is_valid(bytes.fromhex("90 60 A6")), (True, ""))
 
