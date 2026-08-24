@@ -95,3 +95,34 @@ class ConventionTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class EndByteRecoveryTests(unittest.TestCase):
+    """Captures lose the final content byte; CRC brute-force restores it."""
+
+    def _swallow_last_content_byte(self, frame: bytes) -> list[int]:
+        # Simulate a receiver dropping byte -2 (the last content byte):
+        # its stop-bit space merges into the gap, so the capture simply
+        # ends with the CRC. Encode the SHORTENED byte stream as if it
+        # were a genuine transmission.
+        truncated = frame[:-2] + frame[-1:]
+        return raw_timings(truncated)
+
+    def test_recovers_beacon_with_swallowed_byte(self):
+        # Doc section 5: 99-prefixed beacon, D0 0E XX argument swallowed.
+        beacon = build_frame(
+            [0x42, 0x00, 0x00, 0x48, 0x88, 0x0C, 0x2D, 0xD0, 0x0E, 0xA1]
+        )
+        self.assertEqual(beacon[0], 0x99)
+        self.assertEqual(len(beacon), 12)
+        frames = decode_timings(self._swallow_last_content_byte(beacon))
+        self.assertEqual(frames, [beacon])
+
+    def test_strict_validation_still_rejects_real_garbage(self):
+        good = build_frame([0x60])
+        corrupted = bytes([good[0], good[1], 0x00])  # breaks CRC, right length
+        self.assertEqual(decode_timings(raw_timings(corrupted)), [])
+
+    def test_full_length_frames_decode_normally(self):
+        f = build_frame([0x61, 0x6A])  # verified fused blue/green pair
+        self.assertEqual(decode_timings(raw_timings(f)), [f])

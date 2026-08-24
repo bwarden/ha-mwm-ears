@@ -48,7 +48,8 @@ def _validate_frame(state: list[int]) -> bytes | None:
     header = state[0]
     if (header & 0xF0) == 0x90 or (header & 0xF0) == 0xF0:
         payload = header & 0x0F
-        if bits != (payload + 3) * 8:
+        # (payload+2) bytes = end-bit-swallowed read; recovered below.
+        if bits not in ((payload + 3) * 8, (payload + 2) * 8):
             return None
     elif header == 0x55 and len(state) > 1 and state[1] == 0xAA:
         pass  # show/system message: length carried by capture itself
@@ -59,9 +60,24 @@ def _validate_frame(state: list[int]) -> bytes | None:
         if sum(frame[2:-1]) % 256 != frame[-1]:
             return None
         return frame
+    # End-bit swallowing (doc section 2): captures routinely lose the last
+    # CONTENT byte -- its final zero bits scrunch into the stop bit and the
+    # gap -- while the true CRC survives as the captured last byte. The
+    # length nibble says one byte is missing; brute-force it against the
+    # CRC. A random 256-search yields ~1 false positive on average, which
+    # downstream consumers tolerate far better than losing every beacon.
+    if (header & 0xF0) in (0x90, 0xF0):
+        want_total = (header & 0x0F) + 3
+        if len(frame) == want_total - 1:
+            prefix, crc = bytes(state[:-1]), state[-1]
+            for cand in range(256):
+                if crc8_dallas(prefix + bytes([cand])) == crc:
+                    return prefix + bytes([cand]) + bytes([crc])
+            return None
     if frame[-1] != crc8_dallas(frame[:-1]):
         return None
     return frame
+
 
 
 def decode_timings(timings: list[int]) -> list[bytes]:
