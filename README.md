@@ -35,13 +35,18 @@ box, which the form suggests together; either half is optional:
 - **Infrared emitter** -> exposes *Left Ear* and *Right Ear* lights
   driving every MWM ear in range as a paired set.
   - Any colour from HA's picker snaps to the nearest representable shade:
-    simple colours go per-ear via the rig-verified fused phrase
-    (`91 left right`; equal pairs use canonical `90 6X` forms), palette
-    shades use the verified both-ears template (no verified per-ear form).
+    simple colours go per-ear by composing the two verified primitives --
+    `90 <left>` brings both ears to the left colour, then the right-only
+    form (`90 68+X`) restores the right ear (equal pairs use just the
+    canonical `90 6X` form). Multi-byte phrases are NOT per-side fuses:
+    their opcodes execute in order against both ears, so an embedded off
+    byte eventually blacks everything (rig session 2026-08-23). Palette
+    shades use the verified both-ears template (no per-ear form).
     Every colour write is preceded by the standalone `24` flow-control
     override, which per the protocol doc is required to take effect while
-    a built-in program runs (cost: a momentary black dip). Each command
-    frame transmits 1 + N times spaced ~1.8 s apart -- ear receivers drop
+    a built-in program runs (cost: a momentary black dip). Composed state
+    groups re-transmit whole (frames back-to-back), 1 + N group passes
+    spaced ~1.8 s apart -- ear receivers drop
     cold single frames, and genuine wands repeat likewise (mirrors the
     proven `ir-mwm-send` recipe).
   - Effect list invokes verified `48 XX` programs (fades, pulses, strobe,
