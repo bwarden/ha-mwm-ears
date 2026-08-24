@@ -84,13 +84,13 @@ def _walk_tokens(content: list[int] | bytes) -> tuple[list[str], int | None]:
             i += 1
 
         elif b in (0x60, 0x68):
-            push("both ears off" if b == 0x60 else "single ear off")
+            push("both ears off" if b == 0x60 else "right ear off")
             i += 1
         elif 0x61 <= b <= 0x67:
             push(f"both ears {_color_name(b)}")
             i += 1
         elif 0x69 <= b <= 0x6F:
-            push(f"single ear {_color_name(b)} (side unverified)")
+            push(f"right ear {_color_name(0x60 + b - 0x68)}")
             i += 1
 
         elif b == 0x0E and i + 1 < n:
@@ -359,7 +359,9 @@ class EarStateTracker:
         ) if isinstance(frame, str) else bytes(frame)
         content = packed[1:-1]
 
-        # Fused one-bit phrase: 91 cL cR sets each ear independently.
+        # Two-opcode colour script: read per-slot for display. NOTE rig
+        # 2026-08-23: real ears execute these sequentially (last wins);
+        # revisit if genuine traffic ever uses this shape.
         if len(content) == 2 and packed[0] & 0x0F == 1 and (
             0x60 <= content[0] <= 0x67 and 0x60 <= content[1] <= 0x67
         ):
@@ -368,7 +370,24 @@ class EarStateTracker:
             self._effect = None
             return desc
 
-        # Palette phrase template: 19 07 0F 16 pp 18 04 (rig-verified).
+        # Short palette forms from samples/mwm-gwts-colors.tsv:
+        # `0E pp` sets both ears, `0E pp|80` the right ear only.
+        if (
+            len(content) == 2 and content[0] == 0x0E
+            and content[1] & 0x7F <= 0x1D
+        ):
+            pp = content[1] & 0x7F
+            name = "off" if pp == 0x1D else (
+                PALETTE.get(pp, ("unknown", None))[0]
+            )
+            if content[1] & 0x80:
+                self._right = name
+            else:
+                self._left = self._right = name
+            self._effect = None
+            return desc
+
+        # Long palette phrase template: 19 07 0F 16 pp 18 04 (park caps).
         if (
             len(content) == 7 and content[0] == 0x19 and content[4] & 0x7F <= 0x1D
             and content[5] == 0x18 and content[6] == 0x04
@@ -377,7 +396,10 @@ class EarStateTracker:
             name = "off" if pp == 0x1D else (
                 PALETTE.get(pp, ("unknown", None))[0]
             )
-            self._left = self._right = name
+            if content[4] & 0x80:  # TSV right-only form (91 0E pp|80)
+                self._right = name
+            else:
+                self._left = self._right = name
             self._effect = None
             return desc
 
@@ -395,6 +417,16 @@ class EarStateTracker:
                 if content[0] in (0x24, 0x60):
                     self._left = self._right = EAR_STATE_OFF
                     self._effect = None
+
+        # Right-only simple forms (`90 68..6F`, TSV color-X-right rows):
+        # touch ONLY the right slot -- composing our own TX, we rely on
+        # the left ear keeping its colour through these.
+        elif len(content) == 1 and 0x68 <= content[0] <= 0x6F:
+            self._right = (
+                EAR_STATE_OFF if content[0] == 0x68
+                else _color_name(0x60 + content[0] - 0x68)
+            )
+            self._effect = None
 
         if desc["effect"] is not None:
             self._effect = effect_label(desc["effect"])

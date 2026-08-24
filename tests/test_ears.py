@@ -45,45 +45,43 @@ def run(coro):
 
 
 class ApplyTests(unittest.TestCase):
-    def test_initial_send_is_multi_burst(self):
+    def test_initial_send_composes_twice_without_override(self):
         h = Harness()
         run(h.pair.apply_simple("left", 0x64))
-        # override once, then the composed group (both-red + right-only
-        # off-restorer) re-transmitted BURST_REPEATS+1 times.
-        self.assertEqual(len(h.calls), 1 + 2 * (ears.BURST_REPEATS + 1))
-        reset_hex, reset_repeats = h.calls[0]
-        self.assertEqual(reset_repeats, 0)
-        self.assertEqual(bytes.fromhex(reset_hex)[1], 0x24)
-        group = h.calls[1:]
-        first, second = group[0], group[1]
+        # No 24 override (rig 2026-08-23: canonical frames land without
+        # it; the override blacks the ears for seconds). The composed
+        # group runs BURST_REPEATS+1 = 2 passes.
+        self.assertEqual(len(h.calls), 2 * (ears.BURST_REPEATS + 1))
+        first, second = h.calls[0], h.calls[1]
         self.assertEqual(bytes.fromhex(first[0]), build_frame([0x64]))
         self.assertEqual(
             bytes.fromhex(second[0]), build_frame([0x68])
         )  # right-only OFF keeps left red
-        for i, (_hexa, rc) in enumerate(group):
+        for i, (_hexa, rc) in enumerate(h.calls):
             self.assertEqual(rc, 0)
             expected = first if i % 2 == 0 else second
             self.assertEqual(_hexa, expected[0])
 
-    def test_other_side_color_preserved_by_composition(self):
+    def test_right_only_change_sends_single_form(self):
         h = Harness()
         run(h.pair.apply_simple("left", 0x61))
         h.calls.clear()
         run(h.pair.apply_simple("right", 0x66))
-        # Bring BOTH ears to blue, then repaint only the right ear yellow.
+        # Fast path: only the right slot changed -> single verified frame,
+        # repeated; the left ear never sees an intermediate colour.
         self.assertEqual(
-            h.calls[-2:], [(build_frame([0x61]).hex().upper(), 0),
-                           (build_frame([0x6E]).hex().upper(), 0)]
+            h.calls,
+            [(build_frame([0x6E]).hex().upper(), 0)] * (ears.BURST_REPEATS + 1),
         )
 
-    def test_palette_template_frame_shape(self):
+    def test_palette_pick_uses_short_tsv_form(self):
         h = Harness()
         run(h.pair.apply_palette(0x0E))
         frame = bytes.fromhex(h.calls[-1][0])
-        # header 19 07 0F 16 pp 18 04 crc
-        self.assertEqual(len(frame), 9)
-        self.assertEqual(frame[1:6], bytes([0x19, 0x07, 0x0F, 0x16, 0x0E]))
-        self.assertEqual(frame[-3:-1], bytes([0x18, 0x04]))
+        # TSV short form: 91 0E pp crc
+        self.assertEqual(len(frame), 4)
+        self.assertEqual(frame[:3], bytes([0x91, 0x0E, 0x0E]))
+        self.assertEqual(frame.hex().upper(), "910E0E40")
 
     def test_effect_invoke_carries_24_prefix(self):
         h = Harness()
@@ -97,9 +95,10 @@ class TurnOnRestoreTests(unittest.TestCase):
         h = Harness()
         sent = run(h.pair.turn_on_side("left"))
         self.assertEqual(sent, 0x67)
-        frame = bytes.fromhex(h.calls[-2][0])
-        self.assertEqual(frame[1], 0x67)
-        self.assertEqual(bytes.fromhex(h.calls[-1][0]), build_frame([0x68]))
+        group = h.calls[-(2 * (ears.BURST_REPEATS + 1)):]
+        self.assertEqual(bytes.fromhex(group[0][0]), build_frame([0x67]))
+        self.assertEqual(bytes.fromhex(group[1][0]), build_frame([0x68]))
+        self.assertEqual(len(h.calls), 4)
 
     def test_restores_last_explicit_color(self):
         h = Harness()
@@ -108,11 +107,14 @@ class TurnOnRestoreTests(unittest.TestCase):
         before = len(h.calls)
         sent = run(h.pair.turn_on_side("left"))
         self.assertEqual(sent, 0x64)
-        # override + composed group x3; group leads with the colour.
+        # composed group x2 passes, leading with the colour; no override.
         self.assertEqual(len(h.calls),
-                         before + 1 + 2 * (ears.BURST_REPEATS + 1))
-        self.assertEqual(bytes.fromhex(h.calls[before][0])[1], 0x24)
+                         before + 2 * (ears.BURST_REPEATS + 1))
+        self.assertEqual(bytes.fromhex(h.calls[before][0]),
+                         build_frame([0x64]))
         self.assertEqual(bytes.fromhex(h.calls[before + 1][0]),
+                         build_frame([0x68]))
+        self.assertEqual(bytes.fromhex(h.calls[-2][0]),
                          build_frame([0x64]))
         self.assertEqual(bytes.fromhex(h.calls[-1][0]), build_frame([0x68]))
 
@@ -159,13 +161,66 @@ class CompositionTests(unittest.TestCase):
     def test_group_repeats_preserve_frame_order(self):
         h = Harness()
         run(h.pair.apply_simple("left", 0x64))
-        state_calls = h.calls[1:]  # skip override
-        pattern = [c[0] for c in state_calls]
+        pattern = [c[0] for c in h.calls]
         self.assertEqual(
             pattern,
             [build_frame([0x64]).hex().upper(), build_frame([0x68]).hex().upper()]
             * (ears.BURST_REPEATS + 1),
         )
+
+
+class PaletteSideTests(unittest.TestCase):
+    """Per-side palette via the TSV right-only template (91 0E pp|80)."""
+
+    def test_frames_match_tsv_checksums(self):
+        def frame(pp):
+            return build_frame([0x0E, pp])
+
+        # samples/mwm-gwts-colors.tsv rows:
+        self.assertEqual(frame(0x00).hex().upper(), "910E005F")  # both
+        self.assertEqual(frame(0x01).hex().upper(), "910E0101")
+        self.assertEqual(frame(0x80).hex().upper(), "910E80D3")  # right
+        self.assertEqual(frame(0x81).hex().upper(), "910E818D")
+
+    def test_right_pick_is_single_right_only_frame(self):
+        h = Harness()
+        run(h.pair.apply_palette(0x00, side="right"))
+        self.assertEqual(
+            h.calls,
+            [(build_frame([0x0E, 0x80]).hex().upper(), 0)]
+            * (ears.BURST_REPEATS + 1),
+        )
+        self.assertEqual(h.pair.palette_code["right"], 0x00)
+        self.assertIsNone(h.pair.palette_code["left"])
+
+    def test_left_pick_composes_when_right_holds_palette(self):
+        h = Harness()
+        run(h.pair.apply_palette(0x00, side="right"))
+        h.calls.clear()
+        run(h.pair.apply_palette(0x04, side="left"))
+        both = build_frame([0x0E, 0x04])
+        ronly = build_frame([0x0E, 0x80])
+        self.assertEqual(
+            h.calls, [(both.hex().upper(), 0), (ronly.hex().upper(), 0),
+                      (both.hex().upper(), 0), (ronly.hex().upper(), 0)]
+        )
+        self.assertEqual(h.pair.palette_code["left"], 0x04)
+        self.assertEqual(h.pair.palette_code["right"], 0x00)
+
+    def test_left_pick_degrades_to_both_without_right_palette(self):
+        h = Harness()
+        run(h.pair.apply_simple("left", 0x64))
+        h.calls.clear()
+        run(h.pair.apply_palette(0x09, side="left"))
+        self.assertEqual(len(h.calls), ears.BURST_REPEATS + 1)
+        self.assertEqual(h.pair.palette_code["left"], 0x09)
+        self.assertEqual(h.pair.palette_code["right"], 0x09)
+
+    def test_side_names_read_per_side(self):
+        h = Harness()
+        run(h.pair.apply_palette(0x00, side="right"))
+        self.assertEqual(h.pair.side_color_name("right"), "sky")
+        self.assertNotEqual(h.pair.side_color_name("left"), "sky")
 
 
 class OffSemanticsTests(unittest.TestCase):
@@ -250,18 +305,24 @@ class OffSemanticsTests(unittest.TestCase):
         run(h.pair.refresh_tick())
         self.assertEqual(len(h.calls), before)
 
-    def test_colour_writes_carry_leading_override_and_off_does_not(self):
+    def test_effect_writes_carry_override_and_colour_writes_do_not(self):
+        # The standalone `24` blacks the ears for seconds (flow control);
+        # rig 2026-08-23 proved colour frames land without it, so only
+        # effect invocation (doc: required to escape running programs)
+        # still leads with it.
         h = Harness()
         run(h.pair.apply_simple("left", 0x61))
-        self.assertEqual(bytes.fromhex(h.calls[0][0])[1], 0x24)
+        self.assertEqual(bytes.fromhex(h.calls[0][0])[1], 0x61)
         run(h.pair.apply_palette(0x03))
         idx = next(i for i, c in enumerate(h.calls)
-                   if c[0].startswith("96"))
-        self.assertEqual(bytes.fromhex(h.calls[idx - 1][0])[1], 0x24)
+                   if c[0].startswith("91"))
+        self.assertNotEqual(bytes.fromhex(h.calls[idx][0])[1], 0x24)
         before = len(h.calls)
         run(h.pair.turn_off_side("left"))
         for hex_frame, _rc in h.calls[before:]:
             self.assertNotEqual(bytes.fromhex(hex_frame)[1], 0x24)
+        run(h.pair.apply_effect(0x84, "Strobe flash"))
+        self.assertEqual(bytes.fromhex(h.calls[-1][0])[1], 0x24)
 
     def test_refresh_requires_both_sides_actually_coloured(self):
         h = Harness()
@@ -329,14 +390,14 @@ class SuspensionTests(unittest.TestCase):
     def test_own_echo_does_not_suspend(self):
         h = HubHarness()
         run(h.pair.apply_simple("left", 0x64))
-        echo = bytes.fromhex(h.calls[1][0])  # first composed state frame
+        echo = bytes.fromhex(h.calls[0][0])  # first composed state frame
         h.hub.ingest([echo])
         self.assertIsNone(h.pair.suspended_by)
 
     def test_echo_stales_into_foreign_after_window(self):
         h = HubHarness()
         run(h.pair.apply_simple("left", 0x64))
-        echo = bytes.fromhex(h.calls[1][0])  # first composed state frame
+        echo = bytes.fromhex(h.calls[0][0])  # first composed state frame
         h.now += ears.OURS_WINDOW_S + 1
         h.hub.ingest([echo])
         self.assertIsNotNone(h.pair.suspended_by)

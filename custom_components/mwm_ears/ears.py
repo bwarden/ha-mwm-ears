@@ -9,6 +9,7 @@ these objects to infrared emitter/receiver entities.
 from __future__ import annotations
 
 import asyncio
+import logging
 import time
 
 if __package__:  # normal HA component context
@@ -46,10 +47,10 @@ DEFAULT_COLOR_CODE = 0x67  # white
 _PALETTE_TEMPLATE = [0x19, 0x07, 0x0F, 0x16]
 _PALETTE_TEMPLATE_TAIL = [0x18, 0x04]
 
-# Extra spaced transmissions per user-initiated send: ears drop cold
-# single frames, so commands go out BURST_REPEATS+1 times total,
-# REPEAT_GAP_S apart (mirrors wands and perl/bin/ir-mwm-send).
-BURST_REPEATS = 2
+# Total transmissions per logical command pass, REPEAT_GAP_S apart:
+# ir-mwm-send's proven default (--repeat 2). Two passes -- the first
+# warms cold receivers, the second lands.
+BURST_REPEATS = 1
 # Seconds between grouped re-transmissions of one logical command
 # (mirrors perl ir-mwm-send's proven 2x @ ~1.8 s recipe).
 REPEAT_GAP_S = 1.8
@@ -59,6 +60,8 @@ DEFAULT_REFRESH_S = 8.0
 # Transmissions newer than this count as our own echo when overheard.
 OURS_WINDOW_S = 15.0
 
+
+_LOGGER = logging.getLogger(__name__)
 
 RIGHT_ONLY_BASE = 0x68
 
@@ -88,12 +91,15 @@ class EarPairState:
         self.repeat_gap_s = repeat_gap_s
         self._clock = clock
         self.codes: dict[str, int] = {LEFT: EAR_OFF_CODE, RIGHT: EAR_OFF_CODE}
+        # Active PALETTE shade per side (None = simple/unknown). Palette
+        # shades are tracked separately from simple codes because a side
+        # can hold either; TSV has both-ears AND right-only palette forms.
+        self.palette_code: dict[str, int | None] = {LEFT: None, RIGHT: None}
         self.desired_on: dict[str, bool] = {LEFT: False, RIGHT: False}
         # Last explicitly chosen simple color per side (None = never set);
         # bare turn-ons restore it. Palette shades are not remembered here
         # because they apply to both ears and cannot restore per-side.
         self.last_simple: dict[str, int | None] = {LEFT: None, RIGHT: None}
-        self.palette_index: int | None = None
         self.running_effect: str | None = None
         self.suspended_by: str | None = None
         self.refresh_interval: float = DEFAULT_REFRESH_S
@@ -107,8 +113,8 @@ class EarPairState:
             callback()
 
     def side_color_name(self, side: str) -> str:
-        if self.palette_index is not None:
-            entry = PALETTE.get(self.palette_index)
+        if self.palette_code.get(side) is not None:
+            entry = PALETTE.get(self.palette_code[side])
             return entry[0] if entry else "unknown"
         code = self.codes[side]
         if code == EAR_OFF_CODE:
@@ -166,69 +172,107 @@ class EarPairState:
             build_frame([RIGHT_ONLY_BASE + (right - EAR_OFF_CODE)]),
         ]
 
-    async def _send_state(self, repeat_count: int) -> None:
-        """Transmit the composed state as ONE logical, grouped command.
+    async def _send_group(
+        self, frames: list[bytes], repeat_count: int
+    ) -> None:
+        """Transmit frames as ONE logical command, repeated as a GROUP.
 
-        The frame GROUP is what repeats: every attempt runs the full
-        sequence back-to-back (their built-in footers provide the
-        inter-message spacing), and attempts are separated by the
-        rig-proven gap so cold receivers get a warm-up pass.
+        Every pass runs the full sequence back-to-back (the frames'
+        built-in footers provide inter-message spacing); passes are
+        spaced by the rig-proven gap so cold receivers get a warm-up
+        pass. One failed pass logs and continues: partial IR still
+        lands and the remaining passes heal it.
         """
-        frames = self._state_frames()
         for attempt in range(repeat_count + 1):
             if attempt:
                 await asyncio.sleep(self.repeat_gap_s)
             for frame in frames:
-                await self._send(frame, 0)
+                try:
+                    await self._transmit(frame, 0)
+                    self._mark_sent(frame)
+                    self._notify()
+                except Exception:  # noqa: BLE001 - keep the group going
+                    _LOGGER.exception("transmit failed (pass %d)", attempt)
+
+    async def _send_state(self, repeat_count: int) -> None:
+        """Send the composed current pair state."""
+        await self._send_group(self._state_frames(), repeat_count)
 
     async def _send(self, frame: bytes, repeat_count: int) -> None:
         await self._transmit(frame, repeat_count)
         self._mark_sent(frame)
         self._notify()
 
-    async def _send_color_reset(self) -> None:
-        """Emit the standalone `24` override phrase.
-
-        Doc section 4: opcode 24 lets following opcodes take effect while a
-        built-in effect runs, and is REQUIRED to switch away from some of
-        them. Sent once: its five-zero-bit header self-syncs cold receivers
-        (rig-verified) and alone it blacks both ears -- the documented price
-        of escape.
-        """
-        await self._send(build_frame([RESET_OPCODE]), 0)
-
     async def apply_simple(self, side: str, code: int) -> None:
         """Set one ear's simple color (0x60 off .. 0x67 white).
 
-        The pair state is composed from verified primitives (see
-        _state_frames); never a per-side fused phrase.
+        Canonical TSV frames only (rig session 2026-08-23 landed them
+        instantly WITHOUT any leading 24 override; the override's flow
+        control blacks the ears for seconds -- undesirable here). When
+        ONLY the right slot changes we send the single right-only form:
+        no intermediate flash, the left ear never hears a thing.
         """
-        await self._send_color_reset()
-        self.palette_index = None
+        old_left = self.codes[LEFT]
+        self.palette_code[side] = None
         self.running_effect = None
         self.codes[side] = code
         self.desired_on[side] = code != EAR_OFF_CODE
         if code != EAR_OFF_CODE:
             self.last_simple[side] = code
         self.resume()
+        if (
+            side == RIGHT
+            and old_left == self.codes[LEFT]
+            and old_left != code  # equal pairs use the canonical form
+            and EAR_OFF_CODE <= code <= 0x67
+        ):
+            frames = [build_frame([RIGHT_ONLY_BASE + code - EAR_OFF_CODE])]
+            await self._send_group(frames, BURST_REPEATS)
+            return
         await self._send_state(BURST_REPEATS)
 
-    async def apply_palette(self, index: int) -> None:
-        """Apply a palette shade to both ears (no verified per-ear form)."""
-        await self._send_color_reset()
-        self.palette_index = index
+    async def apply_palette(self, index: int, side: str | None = None) -> None:
+        """Apply a palette shade using the TSV short forms only.
+
+        Both-ears: `91 0E pp`; RIGHT-only: `91 0E pp|80` (samples/
+        mwm-gwts-colors.tsv). A LEFT pick composes [both -> index]
+        [right-only restore] when the right ear currently holds a
+        palette shade; otherwise it degrades to the both-ears form
+        because a simple colour cannot be re-expressed as a palette
+        shade (protocol limitation).
+        """
+        target = side or "both"
+
+        def frame(pp: int) -> bytes:
+            return build_frame([0x0E, pp])
+
+        if target == RIGHT:
+            self.palette_code[RIGHT] = index
+            self.running_effect = None
+            self.desired_on[RIGHT] = True
+            self.resume()
+            await self._send_group([frame(index | 0x80)], BURST_REPEATS)
+            return
+
+        restore_right = (
+            target == LEFT and self.palette_code[RIGHT] is not None
+        )
+        self.palette_code[LEFT] = index
+        if not restore_right:
+            self.palette_code[RIGHT] = index
         self.running_effect = None
         self.desired_on = {LEFT: True, RIGHT: True}
         self.resume()
-        await self._send(
-            build_frame(_PALETTE_TEMPLATE + [index] + _PALETTE_TEMPLATE_TAIL),
-            BURST_REPEATS,
-        )
+        frames = [frame(index)]
+        if restore_right:
+            frames.append(frame(self.palette_code[RIGHT] | 0x80))
+        await self._send_group(frames, BURST_REPEATS)
 
     async def apply_effect(self, index: int, label: str) -> None:
         # 24 lets an invocation take effect while a built-in program runs;
         # park captures show bare 48 XX phrases working as well.
         self.running_effect = label
+        self.palette_code = {LEFT: None, RIGHT: None}
         self.desired_on = {LEFT: True, RIGHT: True}
         self.resume()
         await self._send(build_frame([0x24, 0x48, index]), BURST_REPEATS)
@@ -259,10 +303,18 @@ class EarPairState:
             self.desired_on[side] = False
             return
         self.codes[side] = EAR_OFF_CODE
+        self.palette_code[side] = None
         self.desired_on[side] = False
         if not any(self.desired_on.values()):
             self.running_effect = None
         self.resume()
+        if side == RIGHT:
+            # Right-only OFF is a verified single form (`90 68`): the left
+            # ear stays untouched -- no compose flash.
+            await self._send_group(
+                [build_frame([RIGHT_ONLY_BASE])], BURST_REPEATS
+            )
+            return
         await self._send_state(BURST_REPEATS)
 
     # -- periodic refresh --------------------------------------------------
