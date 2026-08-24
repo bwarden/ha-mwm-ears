@@ -32,10 +32,17 @@ Integration -> "MWM Ears". One integration instance represents ONE MWM
 room and binds two infrared entities -- usually two halves of the same IR
 box, which the form suggests together; either half is optional:
 
-- **Infrared emitter** -> exposes *Left Ear* and *Right Ear* lights
-  driving every MWM ear in range as a paired set.
-  - Any colour from HA's picker snaps to the nearest representable shade,
-    then transmits ONLY verified corpus frames (samples/mwm-gwts-colors.tsv;
+- **Infrared emitter** -> exposes *Both Ears*, *Left Ear* and *Right
+  Ear* lights driving every MWM ear in range as one paired set (all
+  three share a device and always agree -- they are views over one
+  room-state store). *Both Ears* maps to the protocol's native both-ear
+  frames; *Right Ear* to the right-only frames; *Left Ear* is the
+  composed proxy (both -> left colour, then right-only restore).
+  - Any colour from HA's picker snaps to the nearest representable shade
+    using hue-dominant matching (hue drift is penalised far more than
+    brightness drift, so dark/muted requests stay in family instead of
+    leaping to a bright neighbour), then transmits ONLY verified corpus
+    frames (samples/mwm-gwts-colors.tsv;
     rig session 2026-08-23 confirmed multi-byte phrases are sequential
     opcode scripts -- last opcode wins on both ears -- so no per-side
     fused phrases are ever invented):
@@ -52,9 +59,15 @@ box, which the form suggests together; either half is optional:
     running program). Each logical command re-transmits as a GROUP --
     frames back-to-back, two passes ~1.8 s apart, mirroring the proven
     `ir-mwm-send` recipe for receivers that drop cold single frames.
-  - Effect list invokes verified `48 XX` programs (fades, pulses, strobe,
-    transitions, rotations, random, blackout). Bare toggles re-issue the
-    side's last colour, defaulting to white.
+  - Effects appear in HA's drop-down (the entity declares EFFECT
+    support) and apply to the ears as a whole -- the protocol has no
+    per-ear effect invocation. Effect picks invoke verified `48 XX`
+    programs. Bare toggles re-issue the remembered colour, defaulting
+    to white.
+  - Lights follow the room: an overheard FOREIGN command (wand or other
+    transmitter) is adopted into the displayed state and pauses our
+    repeats until your next action; idle beacons keep the effect label
+    current without touching anything.
   - While both ears are on, the current phrase is re-issued every ~8 s so
     newly-powered ears join in. **Off is never repeated** beyond its
     initial multi-burst; effect invocations likewise fire once.
