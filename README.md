@@ -38,6 +38,9 @@ box, which the form suggests together; either half is optional:
     simple colours go per-ear via the rig-verified fused phrase
     (`91 left right`; equal pairs use canonical `90 6X` forms), palette
     shades use the verified both-ears template (no verified per-ear form).
+    Every colour write is preceded by the standalone `24` flow-control
+    override, which per the protocol doc is required to take effect while
+    a built-in program runs (cost: a momentary black dip).
   - Effect list invokes verified `48 XX` programs (fades, pulses, strobe,
     transitions, rotations, random, blackout). Bare toggles re-issue the
     side's last colour, defaulting to white.
@@ -47,9 +50,11 @@ box, which the form suggests together; either half is optional:
 - **Infrared receiver** -> captured timing signals are decoded locally
   (end-bit-swallowed bytes recovered by CRC brute-force) into diagnostic
   sensors:
-  - *last message*: raw frame hex plus our decoded interpretation --
-    wand pushes are understood as complete A-B-A' bundles with the
-    companion's effect/cycle/clock parameters,
+  - *last phrase*: message A of the most recent capture (the whole capture
+    when it wasn't a bundle), with our decoded interpretation,
+  - *last companion*: message B of an A-B-A' bundle -- effect/cycle/clock
+    parameters; state is `none` unless the last capture was a bundle. A'
+    duplicates A and is not reported separately,
   - *assumed state*: best-effort inference of what nearby ears are doing,
     aggregated across ALL receivers and transmitters in the room,
   - *message count*: traffic volume since start.
