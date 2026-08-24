@@ -34,21 +34,24 @@ box, which the form suggests together; either half is optional:
 
 - **Infrared emitter** -> exposes *Left Ear* and *Right Ear* lights
   driving every MWM ear in range as a paired set.
-  - Any colour from HA's picker snaps to the nearest representable shade:
-    simple colours go per-ear by composing the two verified primitives --
-    `90 <left>` brings both ears to the left colour, then the right-only
-    form (`90 68+X`) restores the right ear (equal pairs use just the
-    canonical `90 6X` form). Multi-byte phrases are NOT per-side fuses:
-    their opcodes execute in order against both ears, so an embedded off
-    byte eventually blacks everything (rig session 2026-08-23). Palette
-    shades use the verified both-ears template (no per-ear form).
-    Every colour write is preceded by the standalone `24` flow-control
-    override, which per the protocol doc is required to take effect while
-    a built-in program runs (cost: a momentary black dip). Composed state
-    groups re-transmit whole (frames back-to-back), 1 + N group passes
-    spaced ~1.8 s apart -- ear receivers drop
-    cold single frames, and genuine wands repeat likewise (mirrors the
-    proven `ir-mwm-send` recipe).
+  - Any colour from HA's picker snaps to the nearest representable shade,
+    then transmits ONLY verified corpus frames (samples/mwm-gwts-colors.tsv;
+    rig session 2026-08-23 confirmed multi-byte phrases are sequential
+    opcode scripts -- last opcode wins on both ears -- so no per-side
+    fused phrases are ever invented):
+    - simple colours: both-ears `90 6X`, right-only `90 68+X`. Right-slot
+      changes send the single right-only form (no visible flash); left
+      changes compose `90 <left>` + `90 <right-only restore>`.
+    - palette shades: both-ears `91 0E pp`, right-only `91 0E pp|80`.
+      Left picks compose both+restore when the right ear already holds a
+      palette shade, else degrade to the both-ears form.
+    - equal pairs use just the canonical single frame (incl. `90 60` off).
+    No leading `24` override precedes colour writes: it blacks the ears
+    for seconds and the canonical frames land without it (rig-verified).
+    Effect invocation still leads with `24` (doc: required to escape a
+    running program). Each logical command re-transmits as a GROUP --
+    frames back-to-back, two passes ~1.8 s apart, mirroring the proven
+    `ir-mwm-send` recipe for receivers that drop cold single frames.
   - Effect list invokes verified `48 XX` programs (fades, pulses, strobe,
     transitions, rotations, random, blackout). Bare toggles re-issue the
     side's last colour, defaulting to white.
