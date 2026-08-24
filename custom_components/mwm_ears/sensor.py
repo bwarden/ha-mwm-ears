@@ -30,7 +30,8 @@ async def async_setup_entry(
     entry: ConfigEntry,
     async_add_entities,
 ) -> None:
-    receiver: ReceiverData = hass.data[DOMAIN][entry.entry_id]
+    runtime = hass.data[DOMAIN][entry.entry_id]
+    receiver: ReceiverData = runtime["rx"]  # set: receiver half configured
     hub: ObservedHub = hass.data[DOMAIN][HUB_KEY]
     if not entry.data.get(CONF_RECEIVER_ENTITY):
         return  # this instance has no receiver half

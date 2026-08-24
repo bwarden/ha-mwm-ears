@@ -46,7 +46,8 @@ async def async_setup_entry(
     entry: ConfigEntry,
     async_add_entities,
 ) -> None:
-    store: EarPairState = hass.data[DOMAIN][entry.entry_id]
+    runtime = hass.data[DOMAIN][entry.entry_id]
+    store: EarPairState = runtime["pair"]  # set: emitter half configured
     hub: ObservedHub = hass.data[DOMAIN][HUB_KEY]
     name = entry.data["name"]
     if not entry.data.get(CONF_EMITTER_ENTITY):
