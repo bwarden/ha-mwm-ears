@@ -97,3 +97,36 @@ class SpacedRepeatContract(unittest.TestCase):
         src = _read("const.py")
         self.assertIn("REPEAT_GAP_S", src)
         self.assertIn("drop cold single frames", src)
+
+
+class VersionContract(unittest.TestCase):
+    """manifest.json and const.py must agree on the integration version.
+
+    HA reads the version from manifest.json (update detection), while the
+    device page shows sw_version sourced from const.py; a silent drift
+    between them would make update tracking lie.
+    """
+
+    def test_manifest_version_matches_const(self):
+        import json
+
+        manifest = json.loads(_read("manifest.json"))
+        const = _read("const.py")
+        match = re.search(
+            r'^INTEGRATION_VERSION = "([^"]+)"', const, re.M
+        )
+        self.assertIsNotNone(match, "const.py lost INTEGRATION_VERSION")
+        self.assertEqual(manifest.get("version"), match.group(1))
+
+
+class EffectsSelectorContract(unittest.TestCase):
+    """Effect programs are room-wide: only Both Ears may offer them."""
+
+    def test_effect_list_gated_on_both_side(self):
+        light = _read("light.py")
+        body = re.search(
+            r"def effect_list\(self\)[\s\S]*?(?=\n    @property|\n    def )",
+            light,
+        ).group(0)
+        self.assertRegex(body, r"if self\._side != BOTH:")
+        self.assertIn("return None", body)

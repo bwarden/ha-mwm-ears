@@ -17,7 +17,7 @@ from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.util.color import color_hs_to_RGB, color_RGB_to_hs
 
 from ._mwm import EAR_STATE_OFF, SIMPLE_COLORS, nearest_entry
-from .const import CONF_EMITTER_ENTITY, DEVICE_ID, DOMAIN, HUB_KEY
+from .const import CONF_EMITTER_ENTITY, DEVICE_ID, INTEGRATION_VERSION, DOMAIN, HUB_KEY
 from .ears import (
     BOTH,
     EAR_OFF_CODE,
@@ -113,6 +113,7 @@ class MwmEarLight(LightEntity):
             name="MWM Ears",
             manufacturer="Disney (Made With Magic)",
             model="MWM/GWTS infrared room controller",
+            sw_version=INTEGRATION_VERSION,
         )
         self._is_on = False
 
@@ -141,6 +142,12 @@ class MwmEarLight(LightEntity):
 
     @property
     def effect_list(self) -> list[str] | None:
+        # Effect programs are room-wide: a wand command re-programs every
+        # ear in range regardless of which entity issued it. Offering the
+        # selector on the per-ear entities would suggest per-ear control
+        # that the protocol cannot deliver.
+        if self._side != BOTH:
+            return None
         return list(LIGHT_EFFECTS)
 
     @property
