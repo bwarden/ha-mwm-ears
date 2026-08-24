@@ -27,28 +27,37 @@ unzip dist/mwm_ears.zip -d ~/.homeassistant/
 ```
 
 (or copy `custom_components/mwm_ears/` by hand). Restart Home
-Assistant, then add endpoints via Settings -> Devices & Services -> Add
-Integration -> "IR Remote Tools". Each endpoint binds one infrared entity:
+Assistant, then add a room via Settings -> Devices & Services -> Add
+Integration -> "MWM Ears". One integration instance represents ONE MWM
+room and binds two infrared entities -- usually two halves of the same IR
+box, which the form suggests together; either half is optional:
 
-- **Transmitter** = infrared *emitter* entity. Exposes two lights --
-  *Left Ear* and *Right Ear* -- driving every MWM ear in range together.
+- **Infrared emitter** -> exposes *Left Ear* and *Right Ear* lights
+  driving every MWM ear in range as a paired set.
   - Any colour from HA's picker snaps to the nearest representable shade:
-    the 7 simple colours go per-ear as fused one-bit phrases (`91 cL cR`);
-    palette shades use the rig-verified both-ears template (no verified
-    per-ear form exists).
+    simple colours go per-ear via the rig-verified fused phrase
+    (`91 left right`; equal pairs use canonical `90 6X` forms), palette
+    shades use the verified both-ears template (no verified per-ear form).
   - Effect list invokes verified `48 XX` programs (fades, pulses, strobe,
-    transitions, rotations, random, blackout).
-  - While both ears are on, the current colour phrase is re-issued every
-    ~8 s so newly-powered ears join in. **Off is never repeated** beyond
-    its initial multi-burst, so ears under independent control are left
-    alone; effect invocations likewise fire once (restarting would glitch
-    the running program).
-- **Receiver** = infrared *receiver* entity. Captured timing signals are
-  decoded into MWM frames locally and exposed as diagnostic sensors:
-  - *last message*: raw frame hex plus our decoded interpretation,
+    transitions, rotations, random, blackout). Bare toggles re-issue the
+    side's last colour, defaulting to white.
+  - While both ears are on, the current phrase is re-issued every ~8 s so
+    newly-powered ears join in. **Off is never repeated** beyond its
+    initial multi-burst; effect invocations likewise fire once.
+- **Infrared receiver** -> captured timing signals are decoded locally
+  (end-bit-swallowed bytes recovered by CRC brute-force) into diagnostic
+  sensors:
+  - *last message*: raw frame hex plus our decoded interpretation --
+    wand pushes are understood as complete A-B-A' bundles with the
+    companion's effect/cycle/clock parameters,
   - *assumed state*: best-effort inference of what nearby ears are doing,
     aggregated across ALL receivers and transmitters in the room,
   - *message count*: traffic volume since start.
+
+Both halves' entities live on one Home Assistant device, whether the
+emitter and receiver are the same physical box or not. Entries created
+before v0.3 (per-kind transmitter/receiver bindings) cannot migrate;
+delete and re-add them.
 
 ## Room-level awareness
 

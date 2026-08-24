@@ -1,4 +1,4 @@
-"""Config flow: bind an infrared emitter or receiver to an MWM endpoint."""
+"""Config flow: one entry binds an emitter and/or receiver for MWM ears."""
 
 from __future__ import annotations
 
@@ -10,18 +10,16 @@ from homeassistant.core import callback
 from homeassistant.data_entry_flow import FlowResult
 from homeassistant.helpers.entity_registry import async_get
 
-from .const import CONF_ENTITY_ID, CONF_KIND, DOMAIN, KIND_RECEIVER, KIND_TRANSMITTER
+from .const import CONF_EMITTER_ENTITY, CONF_RECEIVER_ENTITY, DOMAIN
 
-_KIND_LABELS = {
-    KIND_TRANSMITTER: "Transmitter (drives MWM ear lights via an IR emitter)",
-    KIND_RECEIVER: "Receiver (diagnostic sensors from captured IR signals)",
-}
+_NONE = ""
+_NONE_LABEL = "-- not used --"
 
 
-def _entity_choices(hass, entity_ids: list[str]) -> dict[str, str]:
+def _choices(hass, entity_ids: list[str]) -> dict[str, str]:
     """Map entity ids to friendly labels using the entity registry."""
     registry = async_get(hass)
-    choices: dict[str, str] = {}
+    choices = {_NONE: _NONE_LABEL}
     for entity_id in entity_ids:
         entry = registry.async_get(entity_id)
         name = entry.name or entry.original_name if entry else None
@@ -29,76 +27,65 @@ def _entity_choices(hass, entity_ids: list[str]) -> dict[str, str]:
     return choices
 
 
-class IrRemoteToolsConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
-    """Handle a config flow for an MWM transmitter or receiver binding."""
+class MwmEarsConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
+    """One integration instance = one MWM room.
 
-    VERSION = 1
+    An instance binds an infrared EMITTER (drives the ear lights), an
+    infrared RECEIVER (diagnostic sensors), or both. The usual setup is a
+    single IR box exposing both, so the form suggests the same device's
+    entities for the two fields; either can be left unused.
+    """
 
-    def __init__(self) -> None:
-        self._kind: str | None = None
-        self._name: str | None = None
+    VERSION = 2
 
     async def async_step_user(self, user_input: dict | None = None) -> FlowResult:
         errors: dict[str, str] = {}
-        if user_input is not None:
-            self._kind = user_input[CONF_KIND]
-            self._name = user_input["name"].strip()
-            return await self.async_step_hardware()
-        return self.async_show_form(
-            step_id="user",
-            data_schema=vol.Schema(
-                {
-                    vol.Required(CONF_KIND, default=KIND_TRANSMITTER): vol.In(
-                        _KIND_LABELS
-                    ),
-                    vol.Required("name"): str,
-                }
-            ),
-            errors=errors,
-        )
+        emitters = infrared.async_get_emitters(self.hass)
+        receivers = infrared.async_get_receivers(self.hass)
+        if not emitters and not receivers:
+            return self.async_abort(reason="no_infrared")
 
-    async def async_step_hardware(
-        self, user_input: dict | None = None
-    ) -> FlowResult:
-        assert self._kind is not None
-        if self._kind == KIND_TRANSMITTER:
-            candidates = infrared.async_get_emitters(self.hass)
-            abort_reason = "no_emitters"
-        else:
-            candidates = infrared.async_get_receivers(self.hass)
-            abort_reason = "no_receivers"
-        if not candidates:
-            return self.async_abort(reason=abort_reason)
         if user_input is not None:
-            await self.async_set_unique_id(f"{self._kind}:{user_input[CONF_ENTITY_ID]}")
-            self._abort_if_unique_id_configured()
-            data = {
-                CONF_KIND: self._kind,
-                "name": self._name,
-                CONF_ENTITY_ID: user_input[CONF_ENTITY_ID],
-            }
-            return self.async_create_entry(title=self._name or "", data=data)
+            emitter = user_input.get(CONF_EMITTER_ENTITY) or _NONE
+            rx = user_input.get(CONF_RECEIVER_ENTITY) or _NONE
+            if not emitter and not rx:
+                errors["base"] = "need_one"
+            else:
+                await self.async_set_unique_id(f"{emitter}|{rx}")
+                self._abort_if_unique_id_configured()
+                data: dict = {"name": user_input["name"].strip() or "MWM Ears"}
+                if emitter:
+                    data[CONF_EMITTER_ENTITY] = emitter
+                if rx:
+                    data[CONF_RECEIVER_ENTITY] = rx
+                return self.async_create_entry(title=data["name"], data=data)
+
+        # Same-box setups: preselect this box's emitter + receiver pair.
+        schema = {
+            vol.Required("name", default="MWM Ears"): str,
+        }
+        if emitters:
+            schema[vol.Optional(CONF_EMITTER_ENTITY, default=emitters[0])] = vol.In(
+                _choices(self.hass, emitters)
+            )
+        if receivers:
+            schema[vol.Optional(CONF_RECEIVER_ENTITY, default=receivers[0])] = vol.In(
+                _choices(self.hass, receivers)
+            )
         return self.async_show_form(
-            step_id="hardware",
-            data_schema=vol.Schema(
-                {
-                    vol.Required(CONF_ENTITY_ID): vol.In(
-                        _entity_choices(self.hass, candidates)
-                    )
-                }
-            ),
+            step_id="user", data_schema=vol.Schema(schema), errors=errors
         )
 
     @staticmethod
     @callback
     def async_get_options_flow(
         config_entry: config_entries.ConfigEntry,
-    ) -> IrRemoteToolsOptionsFlow:
-        return IrRemoteToolsOptionsFlow(config_entry)
+    ) -> MwmEarsOptionsFlow:
+        return MwmEarsOptionsFlow(config_entry)
 
 
-class IrRemoteToolsOptionsFlow(config_entries.OptionsFlow):
-    """Rename an endpoint binding without re-selecting hardware."""
+class MwmEarsOptionsFlow(config_entries.OptionsFlow):
+    """Rename an instance without re-selecting hardware."""
 
     def __init__(self, config_entry: config_entries.ConfigEntry) -> None:
         self.entry = config_entry

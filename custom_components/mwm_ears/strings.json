@@ -2,32 +2,27 @@
   "config": {
     "step": {
       "user": {
-        "title": "Add an MWM infrared endpoint",
-        "description": "Register what this endpoint does. Transmitters drive the MWM ear lights through an infrared emitter; receivers turn captured IR signals into diagnostic sensors.",
+        "title": "MWM Ears room",
+        "description": "Bind this room's infrared hardware. Typically one IR box provides both an emitter and a receiver -- the form suggests them together. Either half can be left unused.",
         "data": {
-          "kind": "What does this endpoint do?",
-          "name": "Name"
-        }
-      },
-      "hardware": {
-        "title": "Select the infrared entity",
-        "description": "Pick the infrared emitter or receiver this endpoint is bound to.",
-        "data": {
-          "entity_id": "Infrared entity"
+          "name": "Name",
+          "emitter_entity": "Infrared emitter (drives the ear lights)",
+          "receiver_entity": "Infrared receiver (diagnostic sensors)"
         }
       }
     },
-    "error": {},
+    "error": {
+      "need_one": "Pick at least one of the two infrared entities."
+    },
     "abort": {
-      "already_configured": "This binding already exists.",
-      "no_emitters": "No infrared emitter entities are available. Set up an infrared proxy (e.g. ESPHome) first.",
-      "no_receivers": "No infrared receiver entities are available. Set up an infrared receiver first."
+      "already_configured": "This emitter/receiver combination already exists.",
+      "no_infrared": "No infrared emitter or receiver entities are available. Set up an infrared proxy (e.g. ESPHome) first."
     }
   },
   "options": {
     "step": {
       "init": {
-        "title": "Rename endpoint",
+        "title": "Rename room",
         "data": {
           "name": "Name"
         }

@@ -16,7 +16,7 @@ from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.util.color import color_hs_to_RGB, color_RGB_to_hs
 
 from ._mwm import SIMPLE_COLORS, nearest_entry
-from .const import DEVICE_ID, DOMAIN, HUB_KEY
+from .const import CONF_EMITTER_ENTITY, DEVICE_ID, DOMAIN, HUB_KEY
 from .ears import LEFT, RIGHT, EarPairState, ObservedHub
 
 _LOGGER = logging.getLogger(__name__)
@@ -49,6 +49,8 @@ async def async_setup_entry(
     store: EarPairState = hass.data[DOMAIN][entry.entry_id]
     hub: ObservedHub = hass.data[DOMAIN][HUB_KEY]
     name = entry.data["name"]
+    if not entry.data.get(CONF_EMITTER_ENTITY):
+        return  # this instance has no emitter half
     async_add_entities(
         [
             MwmEarLight(store, hub, entry, LEFT),

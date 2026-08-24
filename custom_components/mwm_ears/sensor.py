@@ -19,7 +19,7 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.device_registry import DeviceInfo
 
-from .const import CONF_ENTITY_ID, DEVICE_ID, DOMAIN, HUB_KEY
+from .const import CONF_RECEIVER_ENTITY, DEVICE_ID, DOMAIN, HUB_KEY
 from .ears import ObservedHub, ReceiverData
 
 _LOGGER = logging.getLogger(__name__)
@@ -32,6 +32,8 @@ async def async_setup_entry(
 ) -> None:
     receiver: ReceiverData = hass.data[DOMAIN][entry.entry_id]
     hub: ObservedHub = hass.data[DOMAIN][HUB_KEY]
+    if not entry.data.get(CONF_RECEIVER_ENTITY):
+        return  # this instance has no receiver half
     async_add_entities(
         [
             MwmLastMessageSensor(receiver, entry),
@@ -54,7 +56,7 @@ class _ReceiverSensor(SensorEntity):
             model="MWM/GWTS infrared room controller",
         )
         self._base_id = entry.entry_id
-        self._ir_entity_id = entry.data[CONF_ENTITY_ID]
+        self._ir_entity_id = entry.data[CONF_RECEIVER_ENTITY]
 
     def _bind(self, listeners: list) -> None:
         self._listeners = listeners

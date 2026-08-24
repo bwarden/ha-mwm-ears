@@ -1,14 +1,19 @@
 """The IR Remote Tools integration.
 
-A consumer of the Home Assistant infrared entity platform (2026.4+):
+A consumer of the Home Assistant infrared entity platform (2026.4+).
 
-- a *transmitter* config entry binds one infrared **emitter** entity and
-  exposes two light entities -- left ear and right ear -- that drive every
-  MWM ("Made With Magic") ear in range as a paired set;
-- a *receiver* entry binds one infrared **receiver** entity, decodes its
-  captured timing signals into MWM frames, and feeds diagnostic sensors
-  plus the room-level observed-state hub that keeps light entities honest
-  about what wands, hats, and other transmitters are doing.
+Each config entry represents ONE MWM room ("Made With Magic") and binds an
+infrared **emitter** and/or **receiver** entity -- usually two entities of
+the same IR box:
+
+- with an emitter, two light entities -- left ear and right ear -- drive
+  every ear in range as a paired set through verified frame forms;
+- with a receiver, captured timing signals are decoded into MWM frames,
+  feeding diagnostic sensors plus the room-level observed-state hub that
+  keeps light entities honest about what wands, hats, and other
+  transmitters are doing;
+- all instances share one HA device per entry so lights and sensors of an
+  IR box appear together.
 """
 
 from __future__ import annotations
@@ -23,21 +28,16 @@ from homeassistant.helpers.event import async_track_time_interval
 
 from ._mwm import MwmCommand, decode_timings
 from .const import (
-    CONF_ENTITY_ID,
-    CONF_KIND,
+    CONF_EMITTER_ENTITY,
+    CONF_RECEIVER_ENTITY,
     DOMAIN,
     HUB_KEY,
-    KIND_RECEIVER,
-    KIND_TRANSMITTER,
 )
 from .ears import EarPairState, ObservedHub, ReceiverData
 
 _LOGGER = logging.getLogger(__name__)
 
-PLATFORMS_BY_KIND = {
-    KIND_TRANSMITTER: ["light"],
-    KIND_RECEIVER: ["sensor"],
-}
+PLATFORMS = ["light", "sensor"]
 
 def _get_hub(hass: HomeAssistant) -> ObservedHub:
     data = hass.data.setdefault(DOMAIN, {})
@@ -67,57 +67,70 @@ def _make_signal_handler(receiver: ReceiverData, hub: ObservedHub):
     return handler
 
 
+async def async_migrate_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
+    """Reject pre-0.3 kind-based entries; they must be removed and re-added."""
+    if CONF_EMITTER_ENTITY in entry.data or CONF_RECEIVER_ENTITY in entry.data:
+        hass.config_entries.async_update_entry(entry, version=2)
+        return True
+    _LOGGER.warning(
+        "Pre-0.3 %s entries (per-kind transmitter/receiver bindings) are not "
+        "migratable to the unified room schema; delete this entry and add it "
+        "again.", DOMAIN,
+    )
+    return False
+
+
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     hass.data.setdefault(DOMAIN, {})
-    kind = entry.data[CONF_KIND]
     hub = _get_hub(hass)
-    ir_entity_id = entry.data[CONF_ENTITY_ID]
+    runtime: dict = {"pair": None, "rx": None}
+    hass.data[DOMAIN][entry.entry_id] = runtime
 
-    if kind == KIND_TRANSMITTER:
+    emitter_entity = entry.data.get(CONF_EMITTER_ENTITY)
+    if emitter_entity:
+
         async def transmit(frame: bytes, repeat_count: int) -> None:
             await infrared.async_send_command(
                 hass,
-                ir_entity_id,
+                emitter_entity,
                 MwmCommand(frame, repeat_count=repeat_count),
             )
 
-        store = EarPairState(transmit)
-        hass.data[DOMAIN][entry.entry_id] = store
-        hub.pairs.append(store)
+        pair = EarPairState(transmit)
+        runtime["pair"] = pair
+        hub.pairs.append(pair)
 
         async def refresh(now) -> None:
-            await store.refresh_tick()
+            await pair.refresh_tick()
 
         entry.async_on_unload(
             async_track_time_interval(
-                hass, refresh, timedelta(seconds=store.refresh_interval)
+                hass, refresh, timedelta(seconds=pair.refresh_interval)
             )
         )
 
         def _detach() -> None:
-            if store in hub.pairs:
-                hub.pairs.remove(store)
+            if pair in hub.pairs:
+                hub.pairs.remove(pair)
 
         entry.async_on_unload(_detach)
-    else:
+
+    receiver_entity = entry.data.get(CONF_RECEIVER_ENTITY)
+    if receiver_entity:
         receiver_data = ReceiverData()
-        hass.data[DOMAIN][entry.entry_id] = receiver_data
+        runtime["rx"] = receiver_data
         entry.async_on_unload(
             infrared.async_subscribe_receiver(
-                hass, ir_entity_id, _make_signal_handler(receiver_data, hub)
+                hass, receiver_entity, _make_signal_handler(receiver_data, hub)
             )
         )
 
-    await hass.config_entries.async_forward_entry_setups(
-        entry, PLATFORMS_BY_KIND[kind]
-    )
+    await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
     return True
 
 
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
-    unload_ok = await hass.config_entries.async_unload_platforms(
-        entry, PLATFORMS_BY_KIND[entry.data[CONF_KIND]]
-    )
+    unload_ok = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
     if unload_ok:
         # async_on_unload hooks already cancelled timers/subscriptions and
         # detached transmitter pairs from the hub.
