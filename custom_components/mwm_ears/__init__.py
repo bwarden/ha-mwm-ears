@@ -124,11 +124,17 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             for attempt in range(repeat_count + 1):
                 if attempt:
                     await asyncio.sleep(REPEAT_GAP_S)
-                await infrared.async_send_command(
-                    hass,
-                    emitter_entity,
-                    MwmCommand(frame, repeat_count=0),
-                )
+                try:
+                    await infrared.async_send_command(
+                        hass,
+                        emitter_entity,
+                        MwmCommand(frame, repeat_count=0),
+                    )
+                except Exception:  # noqa: BLE001 - caller decides policy
+                    _LOGGER.exception(
+                        "IR send failed (%s pass %d)", frame.hex(), attempt
+                    )
+                    raise
 
         pair = EarPairState(transmit)
         runtime["pair"] = pair

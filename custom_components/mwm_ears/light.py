@@ -125,14 +125,15 @@ class MwmEarLight(LightEntity):
         return {
             "side": self._side,
             "running_effect": self._store.running_effect,
-            "palette_index": self._store.palette_index,
+            "palette_code": dict(self._store.palette_code),
             "suspended_by": self._store.suspended_by,
             "room_state": self._hub.snapshot(),
             "note": (
-                "Palette shades apply to both ears at once; simple colors "
-                "are set per-ear by coordinating both-ears and right-only "
-                "frames. Repeats pause while a foreign MWM command is in "
-                "charge."
+                "Right-ear picks use verified right-only frames directly; "
+                "left picks coordinate both-ears + right-only frames "
+                "(left palette picks fall back to both ears unless the "
+                "right ear already holds a palette shade). Repeats pause "
+                "while a foreign MWM command is in charge."
             ),
         }
 
@@ -140,10 +141,14 @@ class MwmEarLight(LightEntity):
         effect = kwargs.get(ATTR_EFFECT)
         hs_color = kwargs.get(ATTR_HS_COLOR)
 
+        # Optimistic state FIRST: the transmit chain spans seconds (spaced
+        # repeats); setting _is_on afterwards let one flaky emitter call
+        # slide a lit switch back to off even though the IR had landed.
+        self._is_on = True
+
         if effect is not None:
             index = LIGHT_EFFECTS[effect]
             await self._store.apply_effect(index, effect)
-            self._is_on = True
             return
 
         if hs_color is not None:
@@ -151,8 +156,7 @@ class MwmEarLight(LightEntity):
             if kind == "simple":
                 await self._store.apply_simple(self._side, code)
             else:
-                await self._store.apply_palette(code)
-            self._is_on = True
+                await self._store.apply_palette(code, side=self._side)
             self._attr_hs_color = hs_color
             return
 
@@ -161,7 +165,6 @@ class MwmEarLight(LightEntity):
         code = await self._store.turn_on_side(self._side)
         rgb = SIMPLE_COLORS[code][1]
         self._attr_hs_color = color_RGB_to_hs(*rgb)
-        self._is_on = True
 
     async def async_turn_off(self, **kwargs) -> None:
         await self._store.turn_off_side(self._side)
