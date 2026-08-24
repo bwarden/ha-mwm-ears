@@ -9,15 +9,23 @@ from homeassistant.components.light import (
     ATTR_HS_COLOR,
     ColorMode,
     LightEntity,
+    LightEntityFeature,
 )
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.util.color import color_hs_to_RGB, color_RGB_to_hs
 
-from ._mwm import SIMPLE_COLORS, nearest_entry
+from ._mwm import EAR_STATE_OFF, SIMPLE_COLORS, nearest_entry
 from .const import CONF_EMITTER_ENTITY, DEVICE_ID, DOMAIN, HUB_KEY
-from .ears import LEFT, RIGHT, EarPairState, ObservedHub
+from .ears import (
+    BOTH,
+    EAR_OFF_CODE,
+    LEFT,
+    RIGHT,
+    EarPairState,
+    ObservedHub,
+)
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -38,7 +46,7 @@ LIGHT_EFFECTS: dict[str, int] = {
     "Blackout": 0x1F,
 }
 
-_SIDE_NAMES = {LEFT: "Left", RIGHT: "Right"}
+_SIDE_NAMES = {BOTH: "Both", LEFT: "Left", RIGHT: "Right"}
 
 
 async def async_setup_entry(
@@ -54,6 +62,7 @@ async def async_setup_entry(
         return  # this instance has no emitter half
     async_add_entities(
         [
+            MwmEarLight(store, hub, entry, BOTH),
             MwmEarLight(store, hub, entry, LEFT),
             MwmEarLight(store, hub, entry, RIGHT),
         ]
@@ -76,6 +85,9 @@ class MwmEarLight(LightEntity):
     _attr_should_poll = False
     _attr_supported_color_modes = {ColorMode.HS}
     _attr_color_mode = ColorMode.HS
+    # Without this flag HA never renders the effects drop-down even
+    # though effect_list is populated.
+    _attr_supported_features = LightEntityFeature.EFFECT
 
     def __init__(
         self,
@@ -88,7 +100,10 @@ class MwmEarLight(LightEntity):
         self._hub = hub
         self._side = side
         base = entry.data["name"]
-        self._attr_name = f"{base} {_SIDE_NAMES[side]} Ear"
+        suffix = (
+            f"{_SIDE_NAMES[side]} Ear" if side != BOTH else "Both Ears"
+        )
+        self._attr_name = f"{base} {suffix}"
         self._attr_unique_id = f"{entry.entry_id}-{side}"
         # Transmitter and receiver entries deliberately share ONE device:
         # the IR hardware is usually a single box, and even split rx/tx acts
@@ -114,7 +129,15 @@ class MwmEarLight(LightEntity):
 
     @property
     def is_on(self) -> bool:
-        return self._is_on and self._store.side_color_name(self._side) != "off"
+        if self._side == BOTH:
+            return self._is_on and all(
+                self._store.side_color_name(s) != EAR_STATE_OFF
+                for s in (LEFT, RIGHT)
+            )
+        return (
+            self._is_on
+            and self._store.side_color_name(self._side) != EAR_STATE_OFF
+        )
 
     @property
     def effect_list(self) -> list[str] | None:
@@ -154,18 +177,29 @@ class MwmEarLight(LightEntity):
         if hs_color is not None:
             kind, code = nearest_entry(color_hs_to_RGB(*hs_color))
             if kind == "simple":
-                await self._store.apply_simple(self._side, code)
+                if self._side == BOTH:
+                    await self._store.apply_simple_both(code)
+                else:
+                    await self._store.apply_simple(self._side, code)
+            elif self._side == BOTH:
+                await self._store.apply_palette(code)
             else:
                 await self._store.apply_palette(code, side=self._side)
             self._attr_hs_color = hs_color
             return
 
-        # Bare turn-on: restore the side's last explicit color (white if
-        # none) instead of faking an on state that sends nothing IR.
-        code = await self._store.turn_on_side(self._side)
+        # Bare turn-on: restore the remembered color instead of faking an
+        # on state that sends nothing IR.
+        if self._side == BOTH:
+            code = await self._store.turn_on_both()
+        else:
+            code = await self._store.turn_on_side(self._side)
         rgb = SIMPLE_COLORS[code][1]
         self._attr_hs_color = color_RGB_to_hs(*rgb)
 
     async def async_turn_off(self, **kwargs) -> None:
-        await self._store.turn_off_side(self._side)
+        if self._side == BOTH:
+            await self._store.apply_simple_both(EAR_OFF_CODE)
+        else:
+            await self._store.turn_off_side(self._side)
         self._is_on = False

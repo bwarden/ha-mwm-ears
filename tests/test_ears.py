@@ -169,6 +169,69 @@ class CompositionTests(unittest.TestCase):
         )
 
 
+class PairBothTests(unittest.TestCase):
+    def test_apply_simple_both_sends_single_canonical_frame(self):
+        h = Harness()
+        run(h.pair.apply_simple_both(0x64))
+        self.assertEqual(
+            h.calls,
+            [(build_frame([0x64]).hex().upper(), 0)]
+            * (ears.BURST_REPEATS + 1),
+        )
+        self.assertEqual(h.pair.codes, {"left": 0x64, "right": 0x64})
+        self.assertEqual(
+            h.pair.last_simple, {"left": 0x64, "right": 0x64}
+        )
+
+    def test_turn_on_both_defaults_white_then_remembers(self):
+        h = Harness()
+        self.assertEqual(run(h.pair.turn_on_both()), 0x67)
+        run(h.pair.apply_simple_both(0x62))
+        run(h.pair.apply_simple_both(0x60))          # all off
+        self.assertEqual(bytes.fromhex(h.calls[-1][0]), build_frame([0x60]))
+        self.assertEqual(run(h.pair.turn_on_both()), 0x62)
+
+
+class AdoptionTests(unittest.TestCase):
+    """Foreign (wand) commands must move the lights, not just suspend."""
+
+    def test_foreign_colour_command_adopted(self):
+        h = HubHarness()
+        run(h.pair.apply_simple("left", 0x64))
+        h.hub.ingest([build_frame([0x62])])
+        self.assertEqual(h.pair.codes, {"left": 0x62, "right": 0x62})
+        self.assertIn("foreign command", h.pair.suspended_by)
+
+    def test_own_echo_is_neither_adopted_nor_suspends(self):
+        h = HubHarness()
+        run(h.pair.apply_simple("left", 0x64))
+        h.hub.ingest([bytes.fromhex(h.calls[0][0])])
+        self.assertIsNone(h.pair.suspended_by)
+        self.assertEqual(h.pair.codes["left"], 0x64)
+
+    def test_foreign_right_only_touches_right_slot(self):
+        h = HubHarness()
+        run(h.pair.apply_simple_both(0x61))
+        h.hub.ingest([build_frame([0x6E])])
+        self.assertEqual(h.pair.codes, {"left": 0x61, "right": 0x66})
+
+    def test_foreign_effect_invocation_adopted(self):
+        from mwm.decode import effect_label
+
+        h = HubHarness()
+        h.hub.ingest([build_frame([0x24, 0x48, 0x84])])
+        self.assertEqual(h.pair.running_effect, effect_label(0x84))
+        self.assertTrue(all(h.pair.desired_on.values()))
+
+    def test_beacon_updates_pair_effect_label_without_takeover(self):
+        from mwm.decode import effect_label
+
+        h = HubHarness()
+        h.hub.ingest([build_frame([0x42, 0x00, 0x00, 0x48, 0x88, 0x0C, 0x40])])
+        self.assertEqual(h.pair.running_effect, effect_label(0x88))
+        self.assertIsNone(h.pair.suspended_by)
+
+
 class PaletteSideTests(unittest.TestCase):
     """Per-side palette via the TSV right-only template (91 0E pp|80)."""
 

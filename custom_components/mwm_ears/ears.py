@@ -21,6 +21,7 @@ if __package__:  # normal HA component context
         build_frame,
         describe_bundle,
         describe_frame,
+        effect_label,
         frame_is_valid,
     )
 else:  # standalone test harness: _bootstrap registers us as "mwm"
@@ -32,9 +33,11 @@ else:  # standalone test harness: _bootstrap registers us as "mwm"
         build_frame,
         describe_bundle,
         describe_frame,
+        effect_label,
         frame_is_valid,
     )
 
+BOTH = "both"
 LEFT = "left"
 RIGHT = "right"
 
@@ -231,6 +234,86 @@ class EarPairState:
             return
         await self._send_state(BURST_REPEATS)
 
+    async def apply_simple_both(self, code: int) -> None:
+        """Canonical both-ears form (`90 6X`) -- the protocol's home turf."""
+        self.palette_code = {LEFT: None, RIGHT: None}
+        self.running_effect = None
+        self.codes = {LEFT: code, RIGHT: code}
+        on = code != EAR_OFF_CODE
+        self.desired_on = {LEFT: on, RIGHT: on}
+        if on:
+            # Both sides genuinely received this shade.
+            self.last_simple = {LEFT: code, RIGHT: code}
+        self.resume()
+        await self._send_state(BURST_REPEATS)
+
+    async def turn_on_both(self) -> int:
+        """Bare both-ears turn-on: restore the pair's remembered colour."""
+        code = (
+            self.last_simple[LEFT] or self.last_simple[RIGHT]
+            or DEFAULT_COLOR_CODE
+        )
+        await self.apply_simple_both(code)
+        return code
+
+    def adopt_decoded(self, frame: bytes) -> bool:
+        """Mirror a FOREIGN decoded command into displayed state (no TX).
+
+        Keeps the lights honest when a wand or another transmitter takes
+        over the room; suspension keeps our refresh quiet while they rule.
+        Returns True when displayed state changed.
+        """
+        content = bytes(frame)[1:-1]
+        changed = True
+        if len(content) == 1 and 0x60 <= content[0] <= 0x67:
+            code = content[0]
+            self.codes = {LEFT: code, RIGHT: code}
+            self.palette_code = {LEFT: None, RIGHT: None}
+            self.running_effect = None
+            on = code != EAR_OFF_CODE
+            self.desired_on = {LEFT: on, RIGHT: on}
+        elif len(content) == 1 and 0x68 <= content[0] <= 0x6F:
+            self.codes[RIGHT] = (
+                EAR_OFF_CODE if content[0] == 0x68
+                else EAR_OFF_CODE + content[0] - RIGHT_ONLY_BASE
+            )
+            self.palette_code[RIGHT] = None
+        elif (
+            len(content) == 2 and content[0] == 0x0E
+            and content[1] & 0x7F <= 0x1D
+        ):
+            pp = content[1] & 0x7F
+            if content[1] & 0x80:
+                slots = {RIGHT: pp}
+            else:
+                self.codes = {LEFT: EAR_OFF_CODE, RIGHT: EAR_OFF_CODE}
+                slots = {LEFT: pp, RIGHT: pp}
+            self.palette_code.update(slots)
+            self.running_effect = None
+            self.desired_on = {LEFT: True, RIGHT: True}
+        elif len(content) == 2 and content[0] == 0x48:
+            self.running_effect = effect_label(content[1])
+            self.palette_code = {LEFT: None, RIGHT: None}
+            self.desired_on = {LEFT: True, RIGHT: True}
+        elif (
+            len(content) == 3 and content[0] == RESET_OPCODE
+            and content[1] == 0x48
+        ):
+            self.running_effect = effect_label(content[2])
+            self.palette_code = {LEFT: None, RIGHT: None}
+            self.desired_on = {LEFT: True, RIGHT: True}
+        elif len(content) == 1 and content[0] == RESET_OPCODE:
+            # Doc section 4: a bare `24` blacks the ears (escape price).
+            self.codes = {LEFT: EAR_OFF_CODE, RIGHT: EAR_OFF_CODE}
+            self.palette_code = {LEFT: None, RIGHT: None}
+            self.running_effect = None
+            self.desired_on = {LEFT: False, RIGHT: False}
+        else:
+            changed = False
+        if changed:
+            self._notify()
+        return changed
+
     async def apply_palette(self, index: int, side: str | None = None) -> None:
         """Apply a palette shade using the TSV short forms only.
 
@@ -381,14 +464,23 @@ class ObservedHub:
             self.tracker.feed_frame(frame)
             self.last_summary = f"[{desc['kind']}] {desc['summary']}"
             if desc["kind"] == "beacon":
-                continue  # idle sync: effect display only, no takeover
+                # Idle sync: effect display only, no takeover -- but the
+                # pair's effect label should track what the room runs.
+                demo = desc.get("demo_effect")
+                if demo is not None:
+                    label = effect_label(demo)
+                    for pair in self.pairs:
+                        pair.running_effect = label
+                continue
             frame_hex = bytes(frame).hex().upper()
             if any(pair.matches_recent(frame_hex) for pair in self.pairs):
                 continue  # our own echo bouncing back
-            # Foreign command (wand / other transmitter): suspend repeats
-            # and adopt what we can understand of it.
+            # Foreign command (wand / other transmitter): mirror what we
+            # understood into the displayed state, then suspend repeats
+            # until the next explicit user action.
             self.last_foreign_summary = self.last_summary
             for pair in self.pairs:
+                pair.adopt_decoded(frame)
                 pair.suspend(f"foreign command: {desc['summary']}")
         if changed:
             self._notify()
