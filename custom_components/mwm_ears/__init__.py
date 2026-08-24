@@ -18,6 +18,7 @@ the same IR box:
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from datetime import timedelta
 
@@ -34,6 +35,7 @@ from .const import (
     CONF_RECEIVER_ENTITY,
     DOMAIN,
     HUB_KEY,
+    REPEAT_GAP_S,
 )
 from .ears import EarPairState, ObservedHub, ReceiverData
 
@@ -116,11 +118,17 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     if emitter_entity:
 
         async def transmit(frame: bytes, repeat_count: int) -> None:
-            await infrared.async_send_command(
-                hass,
-                emitter_entity,
-                MwmCommand(frame, repeat_count=repeat_count),
-            )
+            # repeat_count counts EXTRA spaced transmissions. The framework's
+            # own back-to-back repeats don't survive cold ear receivers
+            # (rig-verified); the ~1.8 s spacing ir-mwm-send used does.
+            for attempt in range(repeat_count + 1):
+                if attempt:
+                    await asyncio.sleep(REPEAT_GAP_S)
+                await infrared.async_send_command(
+                    hass,
+                    emitter_entity,
+                    MwmCommand(frame, repeat_count=0),
+                )
 
         pair = EarPairState(transmit)
         runtime["pair"] = pair

@@ -81,3 +81,19 @@ class EntityNamingContract(unittest.TestCase):
                 rf"class {cls}\([\s\S]*?(?=\nclass |\Z)", src
             ).group(0)
             self.assertIn("def name(self)", body, f"{cls} lacks a name")
+
+
+class SpacedRepeatContract(unittest.TestCase):
+    """TX must space-repeat like ir-mwm-send; framework repeats don't land."""
+
+    def test_transmit_closure_spaces_extra_repeats(self):
+        src = _read("__init__.py")
+        self.assertIn("asyncio.sleep(REPEAT_GAP_S)", src)
+        self.assertIn("range(repeat_count + 1)", src)
+        # framework-level repeats must be neutralised
+        self.assertRegex(src, r"MwmCommand\(frame, repeat_count=0\)")
+
+    def test_gap_constant_is_documented(self):
+        src = _read("const.py")
+        self.assertIn("REPEAT_GAP_S", src)
+        self.assertIn("drop cold single frames", src)

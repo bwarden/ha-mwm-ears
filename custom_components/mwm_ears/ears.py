@@ -45,7 +45,9 @@ DEFAULT_COLOR_CODE = 0x67  # white
 _PALETTE_TEMPLATE = [0x19, 0x07, 0x0F, 0x16]
 _PALETTE_TEMPLATE_TAIL = [0x18, 0x04]
 
-# Extra transmissions per user-initiated send (initial multi-burst).
+# Extra spaced transmissions per user-initiated send: ears drop cold
+# single frames, so commands go out BURST_REPEATS+1 times total,
+# REPEAT_GAP_S apart (mirrors wands and perl/bin/ir-mwm-send).
 BURST_REPEATS = 2
 # Periodic re-issue cadence so late joiners sync; matches ear-hat beacon
 # pacing (~7-12 s).
@@ -59,7 +61,8 @@ class EarPairState:
 
     Refresh semantics:
 
-    - user-initiated sends use a multi-burst (repeat_count=BURST_REPEATS);
+    - user-initiated sends use repeat_count=BURST_REPEATS extra spaced
+  transmissions;
     - while BOTH ears are on, a periodic tick re-issues the current fused
       colour phrase once so newly-powered ears join in;
     - any off state is sent only as its initial burst and never repeated,
@@ -154,9 +157,9 @@ class EarPairState:
 
         Doc section 4: opcode 24 lets following opcodes take effect while a
         built-in effect runs, and is REQUIRED to switch away from some of
-        them -- rig session showed correct colour phrases being ignored by
-        ears cycling demo effects until overridden. Sent once, un-repeated;
-        the brief black dip is the documented price of escape.
+        them. Sent once: its five-zero-bit header self-syncs cold receivers
+        (rig-verified) and alone it blacks both ears -- the documented price
+        of escape.
         """
         await self._send(build_frame([RESET_OPCODE]), 0)
 
