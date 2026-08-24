@@ -152,6 +152,30 @@ class OffSemanticsTests(unittest.TestCase):
         self.assertEqual(len(h.calls), before + 1)
         self.assertEqual(frame[:2], b"\x90\x64")
 
+    def test_no_state_lets_the_tick_emit_all_off(self):
+        # Directive: there is NO all-off keep-alive. Sweep every reachable
+        # state through many ticks; an all-off frame must never ride a tick.
+        h = Harness()
+        scenarios = [
+            lambda: None,                                    # fresh/off
+            lambda: run(h.pair.apply_palette(0x0E)),         # palette armed
+            lambda: run(h.pair.apply_effect(0x84, "Strobe")),
+            lambda: run(h.pair.apply_simple("left", 0x64)),
+            lambda: run(h.pair.apply_simple("right", 0x61)),
+            lambda: run(h.pair.turn_off_side("left")),
+            lambda: run(h.pair.turn_off_side("right")),
+        ]
+        for scenario in scenarios:
+            scenario()
+            for _ in range(3):
+                before = len(h.calls)
+                run(h.pair.refresh_tick())
+                for hex_frame, _rc in h.calls[before:]:
+                    self.assertNotEqual(
+                        bytes.fromhex(hex_frame)[:2], b"\x90\x60",
+                        f"tick emitted all-off in state {h.pair.codes}",
+                    )
+
     def test_palette_pick_does_not_arm_all_off_refresh(self):
         # Live-observed bug: picking a colour arms desired_on while codes
         # stay off; the 8 s tick then re-sent the 90 60 keep-alive forever,
