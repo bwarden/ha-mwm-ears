@@ -152,6 +152,26 @@ class OffSemanticsTests(unittest.TestCase):
         self.assertEqual(len(h.calls), before + 1)
         self.assertEqual(frame[:2], b"\x90\x64")
 
+    def test_palette_pick_does_not_arm_all_off_refresh(self):
+        # Live-observed bug: picking a colour arms desired_on while codes
+        # stay off; the 8 s tick then re-sent the 90 60 keep-alive forever,
+        # killing every palette shade within seconds ("colours do nothing",
+        # room ends dark).
+        h = Harness()
+        run(h.pair.apply_palette(0x09))
+        before = len(h.calls)
+        self.assertFalse(run(h.pair.refresh_tick()))
+        self.assertFalse(h.pair.should_refresh)
+        run(h.pair.refresh_tick())
+        self.assertEqual(len(h.calls), before)
+
+    def test_refresh_requires_both_sides_actually_coloured(self):
+        h = Harness()
+        run(h.pair.apply_simple("left", 0x64))
+        self.assertFalse(run(h.pair.refresh_tick()))   # right still off
+        run(h.pair.apply_simple("right", 0x61))
+        self.assertTrue(run(h.pair.refresh_tick()))
+
     def test_turning_off_already_dark_ear_sends_nothing(self):
         h = Harness()
         run(h.pair.apply_simple("left", 0x64))

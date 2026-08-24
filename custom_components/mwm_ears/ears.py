@@ -213,8 +213,13 @@ class EarPairState:
 
     @property
     def should_refresh(self) -> bool:
+        # Gate on ACTUAL colours, not desired_on: apply_palette arms
+        # desired_on while codes stay off -- refreshing then would spam
+        # the all-off keep-alive over the palette shade every tick
+        # (observed live: colour picks "did nothing" because this buried
+        # them within 8 seconds).
         return (
-            all(self.desired_on.values())
+            all(self.codes[side] != EAR_OFF_CODE for side in (LEFT, RIGHT))
             and self.suspended_by is None
         )
 
