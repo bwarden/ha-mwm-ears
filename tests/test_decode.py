@@ -125,6 +125,21 @@ class TrackerTests(unittest.TestCase):
         self.assertEqual(tracker.snapshot(), "left blue, right yellow")
         self.assertIsNone(tracker.effect)
 
+    def test_right_only_frames_touch_right_slot_only(self):
+        tracker = EarStateTracker()
+        tracker.feed_frame(frame_hex([0x61]))          # both blue
+        tracker.feed_frame(build_frame([0x6E]))        # right-only yellow
+        self.assertEqual(tracker.snapshot(), "left blue, right yellow")
+        tracker.feed_frame(build_frame([0x68]))        # right-only off
+        self.assertEqual(tracker.snapshot(), "left blue, right off")
+
+    def test_short_palette_forms_read_per_side(self):
+        tracker = EarStateTracker()
+        tracker.feed_frame(build_frame([0x0E, 0x80 | 0x01]))  # right azure
+        self.assertEqual(tracker.snapshot(), "left off, right azure")
+        tracker.feed_frame(build_frame([0x0E, 0x12]))         # both yellow
+        self.assertEqual(tracker.snapshot(), "both ears yellow")
+
     def test_both_off_keepalive(self):
         tracker = EarStateTracker()
         tracker.feed_frame(frame_hex([0x61, 0x62]))
