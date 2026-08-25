@@ -165,11 +165,58 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     if receiver_entity:
         receiver_data = ReceiverData()
         runtime["rx"] = receiver_data
-        entry.async_on_unload(
-            infrared.async_subscribe_receiver(
-                hass, receiver_entity, _make_signal_handler(receiver_data, hub)
+        sub_state: dict = {"unsub": None}
+
+        def _subscribe() -> None:
+            sub_state["unsub"] = infrared.async_subscribe_receiver(
+                hass, receiver_entity,
+                _make_signal_handler(receiver_data, hub),
             )
+
+        _subscribe()
+
+        async def _rx_watchdog(now) -> None:
+            # The custom infrared integration has been observed to accept
+            # a subscription while still initialising and then never
+            # dispatch to it -- lights kept working, diagnostic sensors
+            # froze until the next restart (rig 2026-08-24). When the
+            # framework receiver clearly heard something new but our
+            # counters did not move, rebuild the subscription.
+            state = hass.states.get(receiver_entity)
+            if state is None:
+                return
+            prev_ts = sub_state.get("ts")
+            prev_seen = sub_state.get("seen")
+            sub_state["ts"] = state.last_updated
+            sub_state["seen"] = receiver_data.signals_seen
+            if prev_ts is None or state.last_updated == prev_ts:
+                return  # nothing new upstream either
+            if prev_seen is not None and receiver_data.signals_seen != prev_seen:
+                return  # healthy: the capture reached our handler
+            old = sub_state.get("unsub")
+            if callable(old):
+                try:
+                    old()
+                except Exception:  # noqa: BLE001 - best-effort teardown
+                    pass
+            _subscribe()
+            receiver_data.rebinds += 1
+            _LOGGER.warning(
+                "receiver %s went quiet while captures continued; "
+                "resubscribed (rebind %d)",
+                receiver_entity, receiver_data.rebinds,
+            )
+
+        entry.async_on_unload(
+            async_track_time_interval(hass, _rx_watchdog, timedelta(seconds=60))
         )
+
+        def _unsubscribe() -> None:
+            unsub = sub_state.get("unsub")
+            if callable(unsub):
+                unsub()
+
+        entry.async_on_unload(_unsubscribe)
 
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
     return True

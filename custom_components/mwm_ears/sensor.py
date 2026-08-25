@@ -111,6 +111,7 @@ class MwmPhraseSensor(_ReceiverSensor):
             "messages_seen": receiver.message_count,
             "invalid_frames": receiver.invalid_count,
             "signals_seen": receiver.signals_seen,
+            "receiver_rebinds": receiver.rebinds,
             "last_signal": receiver.last_signal_debug,
         }
 

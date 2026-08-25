@@ -302,6 +302,15 @@ class EarPairState:
             self.running_effect = effect_label(content[2])
             self.palette_code = {LEFT: None, RIGHT: None}
             self.desired_on = {LEFT: True, RIGHT: True}
+        elif describe_frame(frame).get("effect") is not None:
+            # Any other shape whose payload names an effect program
+            # (long wand scripts etc.): record the program even when the
+            # colour choreography itself stays opaque to us.
+            self.running_effect = effect_label(
+                describe_frame(frame)["effect"]
+            )
+            self.palette_code = {LEFT: None, RIGHT: None}
+            self.desired_on = {LEFT: True, RIGHT: True}
         elif len(content) == 1 and content[0] == RESET_OPCODE:
             # Doc section 4: a bare `24` blacks the ears (escape price).
             self.codes = {LEFT: EAR_OFF_CODE, RIGHT: EAR_OFF_CODE}
@@ -497,13 +506,26 @@ class ObservedHub:
             callback()
 
     def ingest(self, frames: list[bytes]) -> None:
-        """Feed decoded frames from ANY receiver into the shared view."""
-        changed = False
+        """Feed decoded frames from ANY receiver into the shared view.
+
+        A-B-A' bundles are ONE logical command: the tracker sees all
+        three passes, but only the phrase (frames[0]) drives adoption --
+        the companion block is parameters, not a command, and A' merely
+        repeats A with a rolling counter tail.
+        """
+        valid: list[bytes] = []
         for frame in frames:
             ok, _ = frame_is_valid(frame)
-            if not ok:
+            if ok:
+                valid.append(bytes(frame))
+            else:
                 self.invalid += 1
-                continue
+        if not valid:
+            return
+        bundle = describe_bundle(valid)
+        command_frames = [valid[0]] if bundle else valid
+        changed = False
+        for frame in valid:
             desc = describe_frame(frame)
             self.seen += 1
             changed = True
@@ -517,14 +539,17 @@ class ObservedHub:
                     label = effect_label(demo)
                     for pair in self.pairs:
                         pair.running_effect = label
+        for frame in command_frames:
+            desc = describe_frame(frame)
+            if desc["kind"] == "beacon":
                 continue
-            frame_hex = bytes(frame).hex().upper()
+            frame_hex = frame.hex().upper()
             if any(pair.matches_recent(frame_hex) for pair in self.pairs):
                 continue  # our own echo bouncing back
             # Foreign command (wand / other transmitter): mirror what we
             # understood into the displayed state, then suspend repeats
             # until the next explicit user action.
-            self.last_foreign_summary = self.last_summary
+            self.last_foreign_summary = f"[{desc['kind']}] {desc['summary']}"
             for pair in self.pairs:
                 pair.adopt_decoded(frame)
                 pair.suspend(f"foreign command: {desc['summary']}")
@@ -545,11 +570,14 @@ class ReceiverData:
         self.invalid_count = 0
         self.signals_seen = 0
         self.last_signal_debug: dict | None = None
+        self.rebinds = 0
         self.last_is_bundle = False
         self.last_phrase_hex: str | None = None
         self.last_companion_hex: str | None = None
         self.last_frames_hex = ""
         self.last_summary = ""
+        self.last_frames_desc: list[dict] = []
+        self.last_bundle_desc: dict | None = None
 
     def note_signal(self, payload, candidates: list[list[int]]) -> None:
         """Census one received signal regardless of decodability."""
@@ -584,8 +612,12 @@ class ReceiverData:
             # report that as ONE logical command instead of three lines,
             # keeping the A (phrase) and B (companion) parts separately
             # visible -- A' is omitted when identical to A.
+            self.last_frames_desc = [
+                describe_frame(f) for f in valid_frames
+            ]
             bundle = describe_bundle(valid_frames)
             self.last_is_bundle = bundle is not None
+            self.last_bundle_desc = bundle
             if bundle:
                 self.last_phrase_hex = bundle["phrase_hex"]
                 self.last_companion_hex = bundle["companion_hex"]
