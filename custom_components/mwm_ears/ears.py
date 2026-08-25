@@ -264,7 +264,30 @@ class EarPairState:
         Returns True when displayed state changed.
         """
         content = bytes(frame)[1:-1]
+        desc = describe_frame(frame)
         changed = True
+
+        if desc.get("kind") == "wand-command":
+            # Wand/paintbrush phrases carry structured fields: either an
+            # explicit palette shade or a named program whose visuals we
+            # cannot reproduce frame-for-frame -- record what was chosen,
+            # never invent ear colours the phrase did not state.
+            pal = desc.get("palette")
+            if pal:
+                pp = pal["index"]
+                if pal["scope"] == "right":
+                    self.codes[RIGHT] = EAR_OFF_CODE
+                    self.palette_code[RIGHT] = pp
+                else:
+                    self.codes = {LEFT: EAR_OFF_CODE, RIGHT: EAR_OFF_CODE}
+                    self.palette_code = {LEFT: pp, RIGHT: pp}
+                self.running_effect = None
+            else:
+                self.running_effect = desc["summary"]
+                self.palette_code = {LEFT: None, RIGHT: None}
+                self.desired_on = {LEFT: True, RIGHT: True}
+            self._notify()
+            return changed
         if len(content) == 1 and 0x60 <= content[0] <= 0x67:
             code = content[0]
             self.codes = {LEFT: code, RIGHT: code}
@@ -302,13 +325,11 @@ class EarPairState:
             self.running_effect = effect_label(content[2])
             self.palette_code = {LEFT: None, RIGHT: None}
             self.desired_on = {LEFT: True, RIGHT: True}
-        elif describe_frame(frame).get("effect") is not None:
+        elif desc.get("effect") is not None:
             # Any other shape whose payload names an effect program
             # (long wand scripts etc.): record the program even when the
             # colour choreography itself stays opaque to us.
-            self.running_effect = effect_label(
-                describe_frame(frame)["effect"]
-            )
+            self.running_effect = effect_label(desc["effect"])
             self.palette_code = {LEFT: None, RIGHT: None}
             self.desired_on = {LEFT: True, RIGHT: True}
         elif len(content) == 1 and content[0] == RESET_OPCODE:

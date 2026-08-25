@@ -190,9 +190,70 @@ def _is_beacon(content: list[int] | bytes) -> bool:
     return False
 
 
+# Wand/paintbrush push phrases: `96 19 gg kk vv tt ww cc` (+CRC). The
+# (gg, kk) pair names the program; documented rows from the protocol
+# reference (docs/mwm-show-protocol.md, Calvin 2014 table). Static
+# colour templates additionally carry a palette byte `pp`.
+WAND_PROGRAMS = {
+    (0x0B, 0x36): "both yellow, dim/bright alternating",
+    (0x0B, 0x12): "both green, dim/bright",
+    (0x0D, 0x3F): "fade up white, hold ~2 s, down",
+    (0x0E, 0x31): "blue/yellow alternating ears",
+    (0x0F, 0x39): "blue/white flashing sway",
+    (0x10, 0x12): "both green pulsating",
+    (0x10, 0x24): "pulsating red",
+    (0x11, 0x1B): "light blue L/R/off cycle",
+    (0x11, 0x12): "green L/R/off cycle",
+}
+
+# Static wand colour templates: fixed leading (gg, kk, length). Body
+# layout: `96 19 gg kk 16 pp scope ..` -- pp at index 5, scope byte at
+# index 6 (even = both ears, odd = right-only).
+_WAND_STATIC = {
+    (0x07, 0x0F, 8),
+    (0x0B, 0x09, 8),
+    (0x0D, 0x2D, 8),
+}
+
+
+def _describe_wand(body: list[int]) -> dict:
+    """Decode a `96 19 ...` wand/paintbrush phrase body."""
+    gg, kk = body[2], body[3]
+    desc: dict = {
+        "kind": "wand-command",
+        "group": gg,
+        "program": kk,
+        "palette": None,
+        # Consumers (tracker, adoption) read these unconditionally on
+        # every describe_content result.
+        "tokens": [],
+        "effect": None,
+    }
+    known = WAND_PROGRAMS.get((gg, kk))
+    if (gg, kk, len(body)) in _WAND_STATIC:
+        pp = body[5]
+        scope = "right" if body[6] & 0x01 else "both"
+        desc["palette"] = {"index": pp & 0x7F, "scope": scope}
+        name = PALETTE.get(pp & 0x7F, ("unknown", None))[0]
+        desc["summary"] = (
+            f"wand static colour: {name} ({scope} ears, shade {pp:#04x})"
+        )
+        return desc
+    if known:
+        desc["summary"] = f"wand program: {known}"
+    else:
+        desc["summary"] = (
+            f"wand program {gg:02X}/{kk:02X} "
+            "(undocumented; clock/variant bytes vary per push)"
+        )
+    return desc
+
+
 def describe_content(content: list[int] | bytes) -> dict:
     """Describe a phrase body (frame bytes between header and CRC)."""
     body = list(content)
+    if len(body) >= 2 and body[0] == 0x96 and body[1] == 0x19:
+        return _describe_wand(body)
     if _is_beacon(body):
         return {
             "kind": "beacon",
@@ -289,6 +350,9 @@ def describe_bundle(frames: list[bytes]) -> dict | None:
         "kind": "bundle",
         "phrase_hex": phrase.hex().upper(),
         "companion_hex": companion.hex().upper(),
+        # Structured companion parameters, parallel to the rendered
+        # "parameters" text so entities can expose machine-readable rows.
+        "params": parts,
         "summary": (
             f"A-B-A' bundle: {describe_frame(phrase)['summary']} "
             f"[parameters: {'; '.join(parts) if parts else 'opaque companion'}]"

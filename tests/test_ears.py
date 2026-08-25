@@ -232,6 +232,34 @@ class AdoptionTests(unittest.TestCase):
         self.assertIsNone(h.pair.suspended_by)
 
 
+class WandCommandTests(unittest.TestCase):
+    """96 19 wand phrases decode to programs/colours and drive adoption."""
+
+    def test_documented_program_adopted_as_running_effect(self):
+        h = HubHarness()
+        phrase = bytes.fromhex("9619102410D24E03")   # docs: pulsating red
+        h.hub.ingest([build_frame(phrase)])
+        self.assertEqual(h.pair.running_effect, "wand program: pulsating red")
+        self.assertTrue(all(h.pair.desired_on.values()))
+        self.assertIn("foreign command", h.pair.suspended_by)
+
+    def test_unknown_program_still_records(self):
+        h = HubHarness()
+        phrase = bytes.fromhex("9619102D0A2A9C03")   # live rig capture
+        h.hub.ingest([build_frame(phrase)])
+        self.assertIn("wand program 10/2D", h.pair.running_effect)
+        self.assertIsNone(h.pair.palette_code["left"])
+
+    def test_static_colour_phrase_sets_palette_slots(self):
+        from ears_core import EAR_OFF_CODE, LEFT
+
+        h = HubHarness()
+        phrase = bytes.fromhex("9619070F16A21804")   # docs static template
+        h.hub.ingest([build_frame(phrase)])
+        self.assertEqual(h.pair.palette_code[LEFT], 0xA2 & 0x7F)
+        self.assertEqual(h.pair.codes[LEFT], EAR_OFF_CODE)
+
+
 class PaletteSideTests(unittest.TestCase):
     """Per-side palette via the TSV right-only template (91 0E pp|80)."""
 
