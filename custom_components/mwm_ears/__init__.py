@@ -173,15 +173,6 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         runtime["pair"] = pair
         hub.pairs.append(pair)
 
-        async def refresh(now) -> None:
-            await pair.refresh_tick()
-
-        entry.async_on_unload(
-            async_track_time_interval(
-                hass, refresh, timedelta(seconds=pair.refresh_interval)
-            )
-        )
-
         def _detach() -> None:
             if pair in hub.pairs:
                 hub.pairs.remove(pair)

@@ -1,4 +1,4 @@
-"""Tests for the HA-free ear-pair state logic (refresh/off/suspend rules)."""
+"""Tests for the HA-free ear-pair state logic (off/suspend/adoption rules)."""
 
 import unittest
 
@@ -315,23 +315,24 @@ class PaletteSideTests(unittest.TestCase):
 
 
 class OffSemanticsTests(unittest.TestCase):
-    def test_off_sent_once_and_never_refreshed_when_all_off(self):
+    def test_off_sent_once_in_burst(self):
         h = Harness()
         run(h.pair.apply_simple("left", 0x62))
         run(h.pair.turn_off_side("left"))
-        self.assertFalse(h.pair.should_refresh)
-        self.assertFalse(run(h.pair.refresh_tick()))
         off_sends = [c for c in h.calls
                      if bytes.fromhex(c[0])[:2] == b"\x90\x60"]
         self.assertEqual(len(off_sends), ears.BURST_REPEATS + 1)
 
-    def test_mixed_pair_does_not_repeat(self):
+    def test_mixed_pair_composes_correctly(self):
         h = Harness()
         run(h.pair.apply_simple("left", 0x64))
-        run(h.pair.turn_off_side("right"))  # right already off; explicit
+        h.calls.clear()
         run(h.pair.apply_simple("right", 0x60))
-        self.assertFalse(h.pair.should_refresh)
-        self.assertFalse(run(h.pair.refresh_tick()))
+        # right goes dark via right-only form; left untouched
+        self.assertEqual(len(h.calls), ears.BURST_REPEATS + 1)
+        self.assertEqual(
+            h.calls[0][0], build_frame([ears.RIGHT_ONLY_BASE]).hex().upper()
+        )
 
     def test_equal_pair_uses_canonical_single_byte_form(self):
         h = Harness()
@@ -349,54 +350,7 @@ class OffSemanticsTests(unittest.TestCase):
         self.assertEqual(bytes(frame), build_frame([0x60]))
         self.assertEqual(frame.hex().upper(), "9060A6")
 
-    def test_refresh_reissues_current_canonical_form(self):
-        h = Harness()
-        run(h.pair.apply_simple("left", 0x64))
-        run(h.pair.apply_simple("right", 0x64))  # equal pair, refreshable
-        before = len(h.calls)
-        self.assertTrue(run(h.pair.refresh_tick()))
-        frame = bytes.fromhex(h.calls[-1][0])
-        self.assertEqual(len(h.calls), before + 1)
-        self.assertEqual(frame[:2], b"\x90\x64")
-
-    def test_no_state_lets_the_tick_emit_all_off(self):
-        # Directive: there is NO all-off keep-alive. Sweep every reachable
-        # state through many ticks; an all-off frame must never ride a tick.
-        h = Harness()
-        scenarios = [
-            lambda: None,                                    # fresh/off
-            lambda: run(h.pair.apply_palette(0x0E)),         # palette armed
-            lambda: run(h.pair.apply_effect(0x84, "Strobe")),
-            lambda: run(h.pair.apply_simple("left", 0x64)),
-            lambda: run(h.pair.apply_simple("right", 0x61)),
-            lambda: run(h.pair.turn_off_side("left")),
-            lambda: run(h.pair.turn_off_side("right")),
-        ]
-        for scenario in scenarios:
-            scenario()
-            for _ in range(3):
-                before = len(h.calls)
-                run(h.pair.refresh_tick())
-                for hex_frame, _rc in h.calls[before:]:
-                    self.assertNotEqual(
-                        bytes.fromhex(hex_frame)[:2], b"\x90\x60",
-                        f"tick emitted all-off in state {h.pair.codes}",
-                    )
-
-    def test_palette_pick_does_not_arm_all_off_refresh(self):
-        # Live-observed bug: picking a colour arms desired_on while codes
-        # stay off; the 8 s tick then re-sent the 90 60 keep-alive forever,
-        # killing every palette shade within seconds ("colours do nothing",
-        # room ends dark).
-        h = Harness()
-        run(h.pair.apply_palette(0x09))
-        before = len(h.calls)
-        self.assertFalse(run(h.pair.refresh_tick()))
-        self.assertFalse(h.pair.should_refresh)
-        run(h.pair.refresh_tick())
-        self.assertEqual(len(h.calls), before)
-
-    def test_effect_writes_carry_override_and_colour_writes_do_not(self):
+    def test_turning_off_already_dark_ear_sends_nothing(self):
         # The standalone `24` blacks the ears for seconds (flow control);
         # rig 2026-08-23 proved colour frames land without it, so only
         # effect invocation (doc: required to escape running programs)
@@ -415,13 +369,6 @@ class OffSemanticsTests(unittest.TestCase):
         run(h.pair.apply_effect(0x84, "Strobe flash"))
         self.assertEqual(bytes.fromhex(h.calls[-1][0])[1], 0x24)
 
-    def test_refresh_requires_both_sides_actually_coloured(self):
-        h = Harness()
-        run(h.pair.apply_simple("left", 0x64))
-        self.assertFalse(run(h.pair.refresh_tick()))   # right still off
-        run(h.pair.apply_simple("right", 0x61))
-        self.assertTrue(run(h.pair.refresh_tick()))
-
     def test_turning_off_already_dark_ear_sends_nothing(self):
         h = Harness()
         run(h.pair.apply_simple("left", 0x64))
@@ -432,27 +379,6 @@ class OffSemanticsTests(unittest.TestCase):
         run(h.pair.turn_off_side("left"))
         # only the real all-off group burst (no override frame)
         self.assertEqual(len(h.calls), before + ears.BURST_REPEATS + 1)
-
-    def test_fully_on_pair_repeats_once_per_tick(self):
-        h = Harness()
-        run(h.pair.apply_simple("left", 0x64))
-        run(h.pair.apply_simple("right", 0x66))
-        before = len(h.calls)
-        self.assertTrue(run(h.pair.refresh_tick()))
-        # differing pair -> composed two-frame sequence, single pass
-        self.assertEqual(len(h.calls), before + 2)
-        _, repeats = h.calls[-1]
-        self.assertEqual(repeats, 0)  # single shot on refresh
-        self.assertEqual(bytes.fromhex(h.calls[-2][0]), build_frame([0x64]))
-        self.assertEqual(bytes.fromhex(h.calls[-1][0]), build_frame([0x6E]))
-
-    def test_refresh_resumes_after_full_pair_back_on(self):
-        h = Harness()
-        run(h.pair.apply_simple("left", 0x64))
-        run(h.pair.turn_off_side("right"))
-        self.assertFalse(run(h.pair.refresh_tick()))
-        run(h.pair.apply_simple("right", 0x63))
-        self.assertTrue(h.pair.should_refresh)
 
 
 class SuspensionTests(unittest.TestCase):
@@ -466,17 +392,15 @@ class SuspensionTests(unittest.TestCase):
         h.hub.ingest([self._foreign_frame()])
         self.assertIsNotNone(h.pair.suspended_by)
         self.assertIn("foreign command", h.pair.suspended_by)
-        self.assertFalse(run(h.pair.refresh_tick()))
 
     def test_user_action_clears_suspension(self):
         h = HubHarness()
         run(h.pair.apply_simple("left", 0x64))
-        run(h.pair.apply_simple("right", 0x66))  # full pair -> refreshable
+        run(h.pair.apply_simple("right", 0x66))  # full pair
         h.hub.ingest([self._foreign_frame()])
         self.assertIsNotNone(h.pair.suspended_by)
         run(h.pair.apply_simple("left", 0x65))  # explicit user action
         self.assertIsNone(h.pair.suspended_by)
-        self.assertTrue(run(h.pair.refresh_tick()))
 
     def test_own_echo_does_not_suspend(self):
         h = HubHarness()
@@ -548,6 +472,25 @@ class ReceiverDataTests(unittest.TestCase):
         self.assertEqual(rd.invalid_count, 1)
         self.assertEqual(rd.last_frames_hex, good.hex().upper())
         self.assertEqual(len(seen), 1)  # only valid traffic notifies
+
+    def test_note_signal_notifies_listeners(self):
+        rd = ears.ReceiverData()
+        seen = []
+        rd.listeners.append(lambda: seen.append(rd.signals_seen))
+        # note_signal increments signals_seen and notifies listeners
+        rd.note_signal("dummy", [[417, -417]])
+        self.assertEqual(rd.signals_seen, 1)
+        self.assertEqual(seen, [1])
+        rd.note_signal("dummy", [[834, -417]])
+        self.assertEqual(rd.signals_seen, 2)
+        self.assertEqual(seen, [1, 2])
+
+    def test_note_signal_updates_debug_even_without_frames(self):
+        rd = ears.ReceiverData()
+        rd.note_signal("fake", [])
+        self.assertEqual(rd.signals_seen, 1)
+        self.assertIsNotNone(rd.last_signal_debug)
+        self.assertEqual(rd.last_signal_debug["candidate_lengths"], [])
 
 
 if __name__ == "__main__":

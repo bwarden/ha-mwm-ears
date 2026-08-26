@@ -57,9 +57,7 @@ BURST_REPEATS = 1
 # Seconds between grouped re-transmissions of one logical command
 # (mirrors perl ir-mwm-send's proven 2x @ ~1.8 s recipe).
 REPEAT_GAP_S = 1.8
-# Periodic re-issue cadence so late joiners sync; matches ear-hat beacon
-# pacing (~7-12 s).
-DEFAULT_REFRESH_S = 8.0
+
 # Transmissions newer than this count as our own echo when overheard.
 OURS_WINDOW_S = 15.0
 
@@ -70,20 +68,13 @@ RIGHT_ONLY_BASE = 0x68
 
 
 class EarPairState:
-    """Desired state of one transmitter's ear pair plus repeat policy.
+    """Desired state of one transmitter's ear pair.
 
-    Refresh semantics:
-
-    - user-initiated sends use repeat_count=BURST_REPEATS extra spaced
-  transmissions;
-    - while BOTH ears are on, a periodic tick re-issues the current
-      composed colour pair once so newly-powered ears join in;
-    - any off state is sent only as its initial burst and never repeated,
-      so independently-controlled ears are left alone;
-    - effect invocations are never re-issued (restarting a running program
-      every few seconds would glitch it);
-    - when a foreign MWM command is overheard (wand, another transmitter),
-      repetition suspends until the next explicit user action.
+    User-initiated sends use repeat_count=BURST_REPEATS extra spaced
+    transmissions.  When a foreign MWM command is overheard (wand,
+    another transmitter), repetition suspends until the next explicit
+    user action.  State is kept honest by detecting received IR frames
+    rather than re-blasting commands periodically.
     """
 
     def __init__(
@@ -105,7 +96,6 @@ class EarPairState:
         self.last_simple: dict[str, int | None] = {LEFT: None, RIGHT: None}
         self.running_effect: str | None = None
         self.suspended_by: str | None = None
-        self.refresh_interval: float = DEFAULT_REFRESH_S
         self.listeners: list = []
         self._recent_sent: list[tuple[str, float]] = []
 
@@ -405,12 +395,10 @@ class EarPairState:
         """Turn one ear off.
 
         Routes through _send_state, so the other ear keeps its colour via
-        the both+right-only composition. Sent as a grouped burst only:
-        refresh stays quiet unless both ears are on, so off states are
-        never re-issued. Already-dark ears are a no-op with no
-        transmission: HA fires turn_off liberally (automations, area off,
-        stale restored state) and re-bursting here once produced surprise
-        all-off commands.
+        the both+right-only composition.  Already-dark ears are a no-op
+        with no transmission: HA fires turn_off liberally (automations,
+        area off, stale restored state) and re-bursting here once
+        produced surprise all-off commands.
         """
         if self.codes[side] == EAR_OFF_CODE:
             self.desired_on[side] = False
@@ -430,32 +418,6 @@ class EarPairState:
             return
         await self._send_state(BURST_REPEATS)
 
-    # -- periodic refresh --------------------------------------------------
-
-    @property
-    def should_refresh(self) -> bool:
-        # Gate on ACTUAL colours, not desired_on: apply_palette arms
-        # desired_on while codes stay off -- refreshing then would spam
-        # the all-off keep-alive over the palette shade every tick
-        # (observed live: colour picks "did nothing" because this buried
-        # them within 8 seconds).
-        return (
-            all(self.codes[side] != EAR_OFF_CODE for side in (LEFT, RIGHT))
-            and self.suspended_by is None
-        )
-
-    async def refresh_tick(self) -> bool:
-        """Re-issue the current colour pair for late joiners.
-
-        Returns True when a frame went out. Only fully-on pairs refresh:
-        mixed or all-off pairs must not have their off halves repeated.
-        """
-        if not self.should_refresh:
-            return False
-        for frame in self._state_frames():
-            await self._transmit(frame, 0)
-            self._mark_sent(frame)
-        return True
 
 
 def extract_timing_candidates(payload) -> list[list[int]]:
@@ -601,7 +563,12 @@ class ReceiverData:
         self.last_bundle_desc: dict | None = None
 
     def note_signal(self, payload, candidates: list[list[int]]) -> None:
-        """Census one received signal regardless of decodability."""
+        """Census one received signal regardless of decodability.
+
+        Notifies sensor listeners so diagnostic counters (signals_seen,
+        last_signal_debug) refresh on every received signal, even when
+        decode_timings produces no frames.
+        """
         self.signals_seen += 1
         self.last_signal_debug = {
             "payload_type": type(payload).__name__,
@@ -613,6 +580,8 @@ class ReceiverData:
             "candidate_lengths": [len(c) for c in candidates],
             "head": candidates[0][:6] if candidates else None,
         }
+        for callback in self.listeners:
+            callback()
 
     def ingest(self, frames: list[bytes]) -> None:
         valid_frames: list[bytes] = []
