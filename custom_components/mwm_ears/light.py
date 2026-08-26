@@ -14,9 +14,9 @@ from homeassistant.components.light import (
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.device_registry import DeviceInfo
-from homeassistant.util.color import color_hs_to_RGB, color_RGB_to_hs
+from homeassistant.util.color import color_hs_to_RGB
 
-from ._mwm import EAR_STATE_OFF, SIMPLE_COLORS, nearest_entry
+from ._mwm import nearest_entry
 from .const import CONF_EMITTER_ENTITY, DEVICE_ID, INTEGRATION_VERSION, DOMAIN, HUB_KEY
 from .ears import (
     BOTH,
@@ -115,7 +115,6 @@ class MwmEarLight(LightEntity):
             model="MWM/GWTS infrared room controller",
             sw_version=INTEGRATION_VERSION,
         )
-        self._is_on = False
 
     async def async_added_to_hass(self) -> None:
         self._store.listeners.append(self.async_write_ha_state)
@@ -131,14 +130,21 @@ class MwmEarLight(LightEntity):
     @property
     def is_on(self) -> bool:
         if self._side == BOTH:
-            return self._is_on and all(
-                self._store.side_color_name(s) != EAR_STATE_OFF
-                for s in (LEFT, RIGHT)
+            return (
+                self._store.desired_on[LEFT]
+                and self._store.desired_on[RIGHT]
             )
-        return (
-            self._is_on
-            and self._store.side_color_name(self._side) != EAR_STATE_OFF
-        )
+        return self._store.desired_on[self._side]
+
+    @property
+    def hs_color(self) -> tuple[float, float] | None:
+        return self._store.side_hs_color(self._side)
+
+    @property
+    def effect(self) -> str | None:
+        if self._side == BOTH:
+            return self._store.running_effect
+        return None
 
     @property
     def effect_list(self) -> list[str] | None:
@@ -171,11 +177,6 @@ class MwmEarLight(LightEntity):
         effect = kwargs.get(ATTR_EFFECT)
         hs_color = kwargs.get(ATTR_HS_COLOR)
 
-        # Optimistic state FIRST: the transmit chain spans seconds (spaced
-        # repeats); setting _is_on afterwards let one flaky emitter call
-        # slide a lit switch back to off even though the IR had landed.
-        self._is_on = True
-
         if effect is not None:
             index = LIGHT_EFFECTS[effect]
             await self._store.apply_effect(index, effect)
@@ -192,21 +193,17 @@ class MwmEarLight(LightEntity):
                 await self._store.apply_palette(code)
             else:
                 await self._store.apply_palette(code, side=self._side)
-            self._attr_hs_color = hs_color
             return
 
         # Bare turn-on: restore the remembered color instead of faking an
         # on state that sends nothing IR.
         if self._side == BOTH:
-            code = await self._store.turn_on_both()
+            await self._store.turn_on_both()
         else:
-            code = await self._store.turn_on_side(self._side)
-        rgb = SIMPLE_COLORS[code][1]
-        self._attr_hs_color = color_RGB_to_hs(*rgb)
+            await self._store.turn_on_side(self._side)
 
     async def async_turn_off(self, **kwargs) -> None:
         if self._side == BOTH:
             await self._store.apply_simple_both(EAR_OFF_CODE)
         else:
             await self._store.turn_off_side(self._side)
-        self._is_on = False

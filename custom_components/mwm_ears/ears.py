@@ -114,6 +114,23 @@ class EarPairState:
             return EAR_STATE_OFF
         return SIMPLE_COLORS[code][0] if code in SIMPLE_COLORS else "unknown"
 
+    def side_hs_color(self, side: str) -> tuple[float, float] | None:
+        """Return (hue, saturation) for the ear's current colour, or None."""
+        from homeassistant.util.color import color_RGB_to_hs
+        pp = self.palette_code.get(side)
+        if pp is not None:
+            entry = PALETTE.get(pp)
+            if entry and entry[1]:
+                return color_RGB_to_hs(*entry[1])
+            return None
+        code = self.codes[side]
+        if code == EAR_OFF_CODE:
+            return None
+        entry = SIMPLE_COLORS.get(code)
+        if entry and entry[1]:
+            return color_RGB_to_hs(*entry[1])
+        return None
+
     # -- ours-vs-foreign discrimination ----------------------------------
 
     def _mark_sent(self, frame: bytes) -> None:
@@ -522,6 +539,7 @@ class ObservedHub:
                     label = effect_label(demo)
                     for pair in self.pairs:
                         pair.running_effect = label
+                        pair.desired_on = {LEFT: True, RIGHT: True}
         for frame in command_frames:
             desc = describe_frame(frame)
             if desc["kind"] == "beacon":
