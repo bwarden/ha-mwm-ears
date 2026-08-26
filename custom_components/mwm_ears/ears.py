@@ -117,13 +117,15 @@ class EarPairState:
     def side_hs_color(self, side: str) -> tuple[float, float] | None:
         """Return (hue, saturation) for the ear's current colour, or None."""
         from homeassistant.util.color import color_RGB_to_hs
+        if side == BOTH:
+            side = LEFT  # both-ears commands always set left; representative
         pp = self.palette_code.get(side)
         if pp is not None:
             entry = PALETTE.get(pp)
             if entry and entry[1]:
                 return color_RGB_to_hs(*entry[1])
             return None
-        code = self.codes[side]
+        code = self.codes.get(side, EAR_OFF_CODE)
         if code == EAR_OFF_CODE:
             return None
         entry = SIMPLE_COLORS.get(code)
