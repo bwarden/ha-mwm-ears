@@ -115,23 +115,34 @@ class EarPairState:
         return SIMPLE_COLORS[code][0] if code in SIMPLE_COLORS else "unknown"
 
     def side_hs_color(self, side: str) -> tuple[float, float] | None:
-        """Return (hue, saturation) for the ear's current colour, or None."""
+        """Return (hue, saturation) for the ear's current colour, or None.
+
+        For BOTH, returns the colour only when left and right agree
+        (normal after a both-ears command); returns None when they
+        diverge (e.g. after a foreign right-only command).
+        """
         from homeassistant.util.color import color_RGB_to_hs
-        if side == BOTH:
-            side = LEFT  # both-ears commands always set left; representative
-        pp = self.palette_code.get(side)
-        if pp is not None:
-            entry = PALETTE.get(pp)
+
+        def _hs_for(s: str) -> tuple[float, float] | None:
+            pp = self.palette_code.get(s)
+            if pp is not None:
+                entry = PALETTE.get(pp)
+                if entry and entry[1]:
+                    return color_RGB_to_hs(*entry[1])
+                return None
+            code = self.codes.get(s, EAR_OFF_CODE)
+            if code == EAR_OFF_CODE:
+                return None
+            entry = SIMPLE_COLORS.get(code)
             if entry and entry[1]:
                 return color_RGB_to_hs(*entry[1])
             return None
-        code = self.codes.get(side, EAR_OFF_CODE)
-        if code == EAR_OFF_CODE:
-            return None
-        entry = SIMPLE_COLORS.get(code)
-        if entry and entry[1]:
-            return color_RGB_to_hs(*entry[1])
-        return None
+
+        if side == BOTH:
+            left = _hs_for(LEFT)
+            right = _hs_for(RIGHT)
+            return left if left == right else None
+        return _hs_for(side)
 
     # -- ours-vs-foreign discrimination ----------------------------------
 
