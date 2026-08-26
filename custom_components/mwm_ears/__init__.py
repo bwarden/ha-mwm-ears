@@ -308,17 +308,23 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
 
-    # Apply "mwm" label to all entities created by this entry so they
-    # are filterable in automations and dashboards.  Done here rather
-    # than in entity __init__/async_added_to_hass because the registry
-    # is not ready until after platform setup completes.
-    from homeassistant.helpers import entity_registry as er
+    # Apply "mwm" label to all mwm_ears entities once all entries have
+    # loaded.  Entries load concurrently so a single entry's setup
+    # cannot see every entity yet; defer to the HA started event.
+    _LABEL_DONE = f"{DOMAIN}_labels_applied"
+    if _LABEL_DONE not in hass.data[DOMAIN]:
+        hass.data[DOMAIN][_LABEL_DONE] = True
 
-    registry = er.async_get(hass)
-    for entity_id in er.async_entries_for_config_entry(
-        registry, entry.entry_id,
-    ):
-        registry.async_update(entity_id, labels={"mwm"})
+        @callback
+        def _apply_labels(_event) -> None:
+            from homeassistant.helpers import entity_registry as er
+
+            registry = er.async_get(hass)
+            for eid, reg_entry in registry.entities.items():
+                if reg_entry.platform == DOMAIN:
+                    registry.async_update(eid, labels={"mwm"})
+
+        hass.bus.async_listen_once("homeassistant_started", _apply_labels)
 
     return True
 
