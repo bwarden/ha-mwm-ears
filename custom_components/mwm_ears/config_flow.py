@@ -1,6 +1,15 @@
-"""Config flow: one entry binds an emitter and/or receiver for MWM ears."""
+"""Config flow: one entry binds an emitter and/or receiver for MWM ears.
+
+When the user opens the Add dialog, the flow briefly listens (up to 5 s)
+for IR signals on all untaken receivers.  The first receiver to hear a
+beacon is paired with the emitter that shares its HA device, and that
+pair is pre-selected in the form.
+"""
 
 from __future__ import annotations
+
+import asyncio
+import logging
 
 import voluptuous as vol
 
@@ -12,8 +21,11 @@ from homeassistant.helpers.entity_registry import async_get
 
 from .const import CONF_EMITTER_ENTITY, CONF_RECEIVER_ENTITY, DOMAIN
 
+_LOGGER = logging.getLogger(__name__)
+
 _NONE = ""
 _NONE_LABEL = "-- not used --"
+_DISCOVERY_TIMEOUT_S = 5
 
 
 def _choices(hass, entity_ids: list[str]) -> dict[str, str]:
@@ -25,6 +37,75 @@ def _choices(hass, entity_ids: list[str]) -> dict[str, str]:
         name = entry.name or entry.original_name if entry else None
         choices[entity_id] = f"{name} ({entity_id})" if name else entity_id
     return choices
+
+
+def _taken_entities(hass) -> set[str]:
+    """Collect all infrared entity ids already bound to mwm_ears entries."""
+    taken: set[str] = set()
+    for entry in hass.config_entries.async_entries(DOMAIN):
+        taken.add(entry.data.get(CONF_EMITTER_ENTITY, ""))
+        taken.add(entry.data.get(CONF_RECEIVER_ENTITY, ""))
+    taken.discard("")
+    return taken
+
+
+def _find_emitter_for_receiver(
+    hass, receiver_entity_id: str, untaken_emitters: list[str],
+) -> str | None:
+    """Find the untaken emitter sharing the same HA device as *receiver_entity_id*."""
+    registry = async_get(hass)
+    rx_reg = registry.async_get(receiver_entity_id)
+    if rx_reg is None or not rx_reg.device_id:
+        return None
+    for em_id in untaken_emitters:
+        em_reg = registry.async_get(em_id)
+        if em_reg and em_reg.device_id == rx_reg.device_id:
+            return em_id
+    return None
+
+
+async def _scan_for_beacon(
+    hass, receivers: list[str], timeout: float = _DISCOVERY_TIMEOUT_S,
+) -> str | None:
+    """Temporarily listen for IR signals on *receivers*; return first sender.
+
+    Subscribes to every receiver for up to *timeout* seconds.  The first
+    receiver to report a signal wins.  All subscriptions are torn down
+    before returning, regardless of outcome.
+    """
+    event = asyncio.Event()
+    winner: list[str] = []
+
+    def _make_cb(rid: str):
+        @callback
+        def cb(_signal) -> None:
+            if not winner:
+                winner.append(rid)
+                event.set()
+        return cb
+
+    unsubs: list = []
+    for rx_id in receivers:
+        try:
+            unsub = infrared.async_subscribe_receiver(
+                hass, rx_id, _make_cb(rx_id),
+            )
+            unsubs.append(unsub)
+        except Exception:  # noqa: BLE001 – receiver may not be ready yet
+            _LOGGER.debug("discovery: could not subscribe to %s", rx_id)
+
+    try:
+        await asyncio.wait_for(event.wait(), timeout=timeout)
+    except asyncio.TimeoutError:
+        pass
+    finally:
+        for unsub in unsubs:
+            try:
+                unsub()
+            except Exception:  # noqa: BLE001
+                pass
+
+    return winner[0] if winner else None
 
 
 class MwmEarsConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
@@ -60,17 +141,35 @@ class MwmEarsConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     data[CONF_RECEIVER_ENTITY] = rx
                 return self.async_create_entry(title=data["name"], data=data)
 
-        # Same-box setups: preselect this box's emitter + receiver pair.
-        schema = {
+        # --- auto-discovery: listen for beacons on untaken receivers ---
+        taken = _taken_entities(self.hass)
+        untaken_emitters = [e for e in emitters if e not in taken]
+        untaken_receivers = [r for r in receivers if r not in taken]
+
+        default_emitter = untaken_emitters[0] if untaken_emitters else None
+        default_receiver = untaken_receivers[0] if untaken_receivers else None
+
+        if untaken_receivers:
+            discovered_rx = await _scan_for_beacon(self.hass, untaken_receivers)
+            if discovered_rx is not None:
+                default_receiver = discovered_rx
+                em = _find_emitter_for_receiver(
+                    self.hass, discovered_rx, untaken_emitters,
+                )
+                if em is not None:
+                    default_emitter = em
+
+        # --- build form with filtered choices ---
+        schema: dict = {
             vol.Required("name", default="MWM Ears"): str,
         }
-        if emitters:
-            schema[vol.Optional(CONF_EMITTER_ENTITY, default=emitters[0])] = vol.In(
-                _choices(self.hass, emitters)
+        if untaken_emitters:
+            schema[vol.Optional(CONF_EMITTER_ENTITY, default=default_emitter)] = (
+                vol.In(_choices(self.hass, untaken_emitters))
             )
-        if receivers:
-            schema[vol.Optional(CONF_RECEIVER_ENTITY, default=receivers[0])] = vol.In(
-                _choices(self.hass, receivers)
+        if untaken_receivers:
+            schema[vol.Optional(CONF_RECEIVER_ENTITY, default=default_receiver)] = (
+                vol.In(_choices(self.hass, untaken_receivers))
             )
         return self.async_show_form(
             step_id="user", data_schema=vol.Schema(schema), errors=errors
