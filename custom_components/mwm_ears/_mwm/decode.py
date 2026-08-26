@@ -24,6 +24,7 @@ EFFECT_LABELS: dict[int, str] = {
     0x10: "quick flashing on one ear",
     0x11: "color rotation",
     0x13: "color sequence",
+    0x16: "color cycle with blue return",
     0x1A: "power-on blinks and fade",
     0x1F: "off",
     0x80: "power-on display (demo mode entry)",
