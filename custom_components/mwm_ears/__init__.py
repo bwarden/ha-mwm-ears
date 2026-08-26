@@ -14,6 +14,12 @@ the same IR box:
   transmitters are doing;
 - all instances share one HA device per entry so lights and sensors of an
   IR box appear together.
+
+Entity bindings are resilient: setup always succeeds even when the
+underlying IR device is offline.  A state-change listener completes the
+subscription (or tears it down) as the device transitions between
+available and unavailable, so the entry survives device power-cycles
+without manual reload.
 """
 
 from __future__ import annotations
@@ -27,7 +33,10 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import STATE_UNAVAILABLE, STATE_UNKNOWN
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.exceptions import ConfigEntryNotReady
-from homeassistant.helpers.event import async_track_time_interval
+from homeassistant.helpers.event import (
+    async_track_state_change_event,
+    async_track_time_interval,
+)
 
 from ._mwm import MwmCommand, decode_timings
 from .const import (
@@ -47,6 +56,7 @@ from .ears import (
 _LOGGER = logging.getLogger(__name__)
 
 PLATFORMS = ["light", "sensor"]
+
 
 def _get_hub(hass: HomeAssistant) -> ObservedHub:
     data = hass.data.setdefault(DOMAIN, {})
@@ -91,7 +101,7 @@ async def async_migrate_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     return False
 
 
-def _entity_ready(hass: HomeAssistant, entity_id: str | None) -> bool:
+def _entity_usable(hass: HomeAssistant, entity_id: str | None) -> bool:
     """True when a bound infrared entity exists and has a usable state."""
     if not entity_id:
         return True
@@ -102,19 +112,30 @@ def _entity_ready(hass: HomeAssistant, entity_id: str | None) -> bool:
     )
 
 
+def _entity_discovered(hass: HomeAssistant, entity_id: str | None) -> bool:
+    """True when the entity has been registered in HA (may be unavailable)."""
+    if not entity_id:
+        return True
+    return hass.states.get(entity_id) is not None
+
+
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     emitter_entity = entry.data.get(CONF_EMITTER_ENTITY)
     receiver_entity = entry.data.get(CONF_RECEIVER_ENTITY)
 
-    # MQTT-discovered Tasmota IR entities often appear AFTER our entry is
-    # set up at boot. Raising NotReady makes HA retry quietly with backoff
-    # instead of binding dead entity ids until a manual reload.
+    # MQTT-discovered IR entities often appear AFTER our entry is set up at
+    # boot.  If the entity has not been discovered at all (state is None),
+    # raising NotReady makes HA retry quietly with backoff instead of
+    # binding a nonexistent entity id.  If the entity *exists* but is
+    # unavailable (device offline), we proceed anyway: a state-change
+    # listener will subscribe/unsubscribe as the device recovers.
     missing = [
-        e for e in (emitter_entity, receiver_entity) if not _entity_ready(hass, e)
+        e for e in (emitter_entity, receiver_entity)
+        if not _entity_discovered(hass, e)
     ]
     if missing:
         raise ConfigEntryNotReady(
-            f"infrared entities not ready yet: {', '.join(missing)}"
+            f"infrared entities not yet discovered: {', '.join(missing)}"
         )
 
     hass.data.setdefault(DOMAIN, {})
@@ -125,6 +146,11 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     if emitter_entity:
 
         async def transmit(frame: bytes, repeat_count: int) -> None:
+            if not _entity_usable(hass, emitter_entity):
+                _LOGGER.debug(
+                    "emitter %s unavailable, dropping transmit", emitter_entity,
+                )
+                return
             # repeat_count counts EXTRA spaced transmissions. The framework's
             # own back-to-back repeats don't survive cold ear receivers
             # (rig-verified); the ~1.8 s spacing ir-mwm-send used does.
@@ -173,7 +199,50 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 _make_signal_handler(receiver_data, hub),
             )
 
-        _subscribe()
+        def _teardown_sub() -> None:
+            unsub = sub_state.get("unsub")
+            if callable(unsub):
+                try:
+                    unsub()
+                except Exception:  # noqa: BLE001 - best-effort teardown
+                    pass
+            sub_state["unsub"] = None
+
+        # Subscribe now if entity is already available; otherwise wait for
+        # the state-change listener to fire when the device comes online.
+        if _entity_usable(hass, receiver_entity):
+            _subscribe()
+
+        @callback
+        def _on_receiver_state(event) -> None:
+            new_state = event.data.get("new_state")
+            if new_state is None:
+                return
+            if new_state.state in (STATE_UNAVAILABLE, STATE_UNKNOWN):
+                if sub_state.get("unsub") is not None:
+                    _teardown_sub()
+                    _LOGGER.info(
+                        "receiver %s went unavailable, unsubscribed",
+                        receiver_entity,
+                    )
+            else:
+                if sub_state.get("unsub") is None:
+                    try:
+                        _subscribe()
+                        _LOGGER.info(
+                            "receiver %s available, subscribed",
+                            receiver_entity,
+                        )
+                    except Exception:  # noqa: BLE001
+                        _LOGGER.exception(
+                            "failed to subscribe to %s", receiver_entity,
+                        )
+
+        entry.async_on_unload(
+            async_track_state_change_event(
+                hass, receiver_entity, _on_receiver_state,
+            )
+        )
 
         async def _rx_watchdog(now) -> None:
             # The custom infrared integration has been observed to accept
@@ -182,41 +251,48 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             # froze until the next restart (rig 2026-08-24). When the
             # framework receiver clearly heard something new but our
             # counters did not move, rebuild the subscription.
-            state = hass.states.get(receiver_entity)
-            if state is None:
-                return
-            prev_ts = sub_state.get("ts")
-            prev_seen = sub_state.get("seen")
-            sub_state["ts"] = state.last_updated
-            sub_state["seen"] = receiver_data.signals_seen
-            if prev_ts is None or state.last_updated == prev_ts:
-                return  # nothing new upstream either
-            if prev_seen is not None and receiver_data.signals_seen != prev_seen:
-                return  # healthy: the capture reached our handler
-            old = sub_state.get("unsub")
-            if callable(old):
+            try:
+                state = hass.states.get(receiver_entity)
+                if state is None or state.state in (
+                    STATE_UNAVAILABLE, STATE_UNKNOWN,
+                ):
+                    return  # entity unavailable; state listener handles it
+                prev_ts = sub_state.get("ts")
+                prev_seen = sub_state.get("seen")
+                sub_state["ts"] = state.last_updated
+                sub_state["seen"] = receiver_data.signals_seen
+                if prev_ts is None or state.last_updated == prev_ts:
+                    return  # nothing new upstream either
+                if (
+                    prev_seen is not None
+                    and receiver_data.signals_seen != prev_seen
+                ):
+                    return  # healthy: the capture reached our handler
+                _teardown_sub()
                 try:
-                    old()
-                except Exception:  # noqa: BLE001 - best-effort teardown
-                    pass
-            _subscribe()
-            receiver_data.rebinds += 1
-            _LOGGER.warning(
-                "receiver %s went quiet while captures continued; "
-                "resubscribed (rebind %d)",
-                receiver_entity, receiver_data.rebinds,
-            )
+                    _subscribe()
+                except Exception:  # noqa: BLE001
+                    _LOGGER.exception(
+                        "watchdog resubscribe failed for %s", receiver_entity,
+                    )
+                    return
+                receiver_data.rebinds += 1
+                _LOGGER.warning(
+                    "receiver %s went quiet while captures continued; "
+                    "resubscribed (rebind %d)",
+                    receiver_entity, receiver_data.rebinds,
+                )
+            except Exception:  # noqa: BLE001 - keep watchdog alive
+                _LOGGER.exception(
+                    "receiver watchdog error for %s (rebinds=%d)",
+                    receiver_entity, receiver_data.rebinds,
+                )
 
         entry.async_on_unload(
             async_track_time_interval(hass, _rx_watchdog, timedelta(seconds=60))
         )
 
-        def _unsubscribe() -> None:
-            unsub = sub_state.get("unsub")
-            if callable(unsub):
-                unsub()
-
-        entry.async_on_unload(_unsubscribe)
+        entry.async_on_unload(_teardown_sub)
 
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
     return True

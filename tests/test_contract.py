@@ -56,10 +56,10 @@ if __name__ == "__main__":
 
 
 class BootReadinessContract(unittest.TestCase):
-    def test_setup_raises_not_ready_for_missing_entities(self):
+    def test_setup_raises_not_ready_for_undiscovered_entities(self):
         src = _read("__init__.py")
         self.assertIn("ConfigEntryNotReady", src)
-        self.assertRegex(src, r"_entity_ready\(hass, e\)")
+        self.assertRegex(src, r"_entity_discovered\(hass,")
         self.assertNotRegex(
             src,
             r"hass\.data\[DOMAIN\]\[entry\.entry_id\] = runtime[\s\S]*?"
@@ -81,6 +81,64 @@ class EntityNamingContract(unittest.TestCase):
                 rf"class {cls}\([\s\S]*?(?=\nclass |\Z)", src
             ).group(0)
             self.assertIn("def name(self)", body, f"{cls} lacks a name")
+
+
+class ResilientSetupContract(unittest.TestCase):
+    """Setup must survive device offline/online cycles without manual reload."""
+
+    def test_entity_usable_checks_state_not_availability(self):
+        src = _read("__init__.py")
+        self.assertIn("def _entity_usable(", src)
+        self.assertIn("STATE_UNAVAILABLE", src)
+        self.assertIn("STATE_UNKNOWN", src)
+
+    def test_entity_discovered_checks_state_exists(self):
+        src = _read("__init__.py")
+        self.assertIn("def _entity_discovered(", src)
+
+    def test_setup_tracks_receiver_state_changes(self):
+        src = _read("__init__.py")
+        self.assertIn("async_track_state_change_event", src)
+        self.assertIn("_on_receiver_state", src)
+
+    def test_setup_does_not_raise_for_unavailable_entities(self):
+        src = _read("__init__.py")
+        self.assertNotRegex(
+            src,
+            r"_entity_usable\(hass,.*\n.*raise ConfigEntryNotReady",
+            "must not raise ConfigEntryNotReady for unavailable entities",
+        )
+
+    def test_transmit_guards_unavailable_emitter(self):
+        src = _read("__init__.py")
+        self.assertIn("_entity_usable(hass, emitter_entity)", src)
+
+    def test_watchdog_skips_when_entity_unavailable(self):
+        src = _read("__init__.py")
+        self.assertIn("STATE_UNAVAILABLE", src)
+        self.assertIn("STATE_UNKNOWN", src)
+        self.assertRegex(
+            src,
+            r"state\.state in.*STATE_UNAVAILABLE",
+            "watchdog must check entity availability",
+        )
+
+
+class OptionsFlowContract(unittest.TestCase):
+    """Options flow must allow re-selecting emitter/receiver entities."""
+
+    def test_options_flow_reads_emitters(self):
+        src = _read("config_flow.py")
+        self.assertIn("async_get_emitters", src)
+
+    def test_options_flow_reads_receivers(self):
+        src = _read("config_flow.py")
+        self.assertIn("async_get_receivers", src)
+
+    def test_options_flow_updates_entry_data(self):
+        src = _read("config_flow.py")
+        self.assertIn("async_update_entry", src)
+        self.assertIn("async_reload", src)
 
 
 class SpacedRepeatContract(unittest.TestCase):
