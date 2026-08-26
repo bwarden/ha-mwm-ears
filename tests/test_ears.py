@@ -223,13 +223,18 @@ class AdoptionTests(unittest.TestCase):
         self.assertEqual(h.pair.running_effect, effect_label(0x84))
         self.assertTrue(all(h.pair.desired_on.values()))
 
-    def test_beacon_updates_pair_effect_label_without_takeover(self):
-        from mwm.decode import effect_label
-
+    def test_beacon_does_not_mutate_pair_state(self):
+        """Beacons are idle sync — they must not set desired_on or
+        running_effect on pairs, because the hub is shared across rooms
+        and a beacon heard by one receiver would otherwise pollute every
+        room's entity state."""
         h = HubHarness()
         h.hub.ingest([build_frame([0x42, 0x00, 0x00, 0x48, 0x88, 0x0C, 0x40])])
-        self.assertEqual(h.pair.running_effect, effect_label(0x88))
+        self.assertIsNone(h.pair.running_effect)
+        self.assertFalse(any(h.pair.desired_on.values()))
         self.assertIsNone(h.pair.suspended_by)
+        # Timestamp should be recorded for the silence watchdog.
+        self.assertGreater(h.hub.last_beacon_at, 0)
 
 
 class WandCommandTests(unittest.TestCase):

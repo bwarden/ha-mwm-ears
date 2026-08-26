@@ -549,15 +549,11 @@ class ObservedHub:
             self.tracker.feed_frame(frame)
             self.last_summary = f"[{desc['kind']}] {desc['summary']}"
             if desc["kind"] == "beacon":
-                # Idle sync: effect display only, no takeover -- but the
-                # pair's effect label should track what the room runs.
+                # Idle sync: record timestamp for the silence watchdog.
+                # Do NOT mutate pair state here — the hub is shared across
+                # all rooms, so a beacon heard by one receiver would
+                # incorrectly mark every room's ears as active.
                 self.last_beacon_at = self._clock()
-                demo = desc.get("demo_effect")
-                if demo is not None:
-                    label = effect_label(demo)
-                    for pair in self.pairs:
-                        pair.running_effect = label
-                        pair.desired_on = {LEFT: True, RIGHT: True}
         for frame in command_frames:
             desc = describe_frame(frame)
             if desc["kind"] == "beacon":
