@@ -15,7 +15,7 @@ CONF_RECEIVER_ENTITY = "receiver_entity"
 
 # hass.data[DOMAIN] key for the shared overheard-traffic hub.
 HUB_KEY = "observed_hub"
-DEVICE_ID = "mwm_ears"  # one shared device across transmitter+receiver entries
+
 # Seconds between the spaced re-transmissions of one command. Ear receivers
 # drop cold single frames (AGC needs a warm-up edge); genuine wands repeat,
 # and ir-mwm-send proved 2x @ ~1.8 s against these very ears.
