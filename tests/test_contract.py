@@ -73,14 +73,15 @@ class EntityNamingContract(unittest.TestCase):
         src = _read("sensor.py")
         classes = re.findall(r"^class (Mwm\w+)\(", src, re.M)
         self.assertEqual(
-            len(classes), 4,
+            len(classes), 5,
             f"unexpected sensor class list: {classes}",
         )
         for cls in classes:
             body = re.search(
                 rf"class {cls}\([\s\S]*?(?=\nclass |\Z)", src
             ).group(0)
-            self.assertIn("def name(self)", body, f"{cls} lacks a name")
+            has_name = "def name(self)" in body or "_attr_name" in body
+            self.assertTrue(has_name, f"{cls} lacks a name")
 
 
 class ResilientSetupContract(unittest.TestCase):

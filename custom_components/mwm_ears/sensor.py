@@ -9,6 +9,7 @@ Three entities per receiver entry:
 
 from __future__ import annotations
 
+import json
 import logging
 
 from homeassistant.components.sensor import (
@@ -23,6 +24,8 @@ from .const import CONF_RECEIVER_ENTITY, INTEGRATION_VERSION, DOMAIN, HUB_KEY
 from .ears import ObservedHub, ReceiverData
 
 _LOGGER = logging.getLogger(__name__)
+
+AGGREGATE_DEVICE_ID = f"{DOMAIN}_all_rooms"
 
 
 async def async_setup_entry(
@@ -43,6 +46,12 @@ async def async_setup_entry(
             MwmMessageCountSensor(receiver, entry),
         ]
     )
+
+    # Active-ears sensor: created once when 2+ emitter entries exist.
+    _AGG_KEY = f"{DOMAIN}_aggregate_sensor"
+    if _AGG_KEY not in hass.data[DOMAIN] and len(hub.pairs) >= 2:
+        hass.data[DOMAIN][_AGG_KEY] = True
+        async_add_entities([MwmActiveEarsSensor(hub)])
 
 
 class _ReceiverSensor(SensorEntity):
@@ -207,3 +216,57 @@ class MwmMessageCountSensor(_ReceiverSensor):
     @property
     def native_value(self) -> int:
         return self._receiver.message_count
+
+
+class MwmActiveEarsSensor(SensorEntity):
+    """JSON list of rooms with active ear pairs.
+
+    State is a JSON array of room names whose ears are currently on.
+    Attributes provide per-room detail for template use.
+    """
+
+    _attr_should_poll = False
+    _attr_icon = "mdi:ear-hearing"
+    _attr_unique_id = f"{DOMAIN}_active_ears"
+    _attr_name = "MWM Active Rooms"
+    _attr_labels = {"mwm"}
+
+    def __init__(self, hub: ObservedHub) -> None:
+        self._hub = hub
+        self._attr_device_info = DeviceInfo(
+            identifiers={(DOMAIN, AGGREGATE_DEVICE_ID)},
+            name="MWM Ears",
+            manufacturer="Disney (Made With Magic)",
+            model="MWM/GWTS aggregate controller",
+            sw_version=INTEGRATION_VERSION,
+        )
+
+    async def async_added_to_hass(self) -> None:
+        self._hub.listeners.append(self.async_write_ha_state)
+
+    async def async_will_remove_from_hass(self) -> None:
+        try:
+            self._hub.listeners.remove(self.async_write_ha_state)
+        except ValueError:
+            pass
+
+    @property
+    def native_value(self) -> str:
+        active = [
+            p.room_name for p in self._hub.pairs
+            if any(p.desired_on.values())
+        ]
+        return json.dumps(active)
+
+    @property
+    def extra_state_attributes(self) -> dict:
+        rooms = {}
+        for pair in self._hub.pairs:
+            rooms[pair.room_name or "unknown"] = {
+                "on": any(pair.desired_on.values()),
+                "left_on": pair.desired_on.get("left", False),
+                "right_on": pair.desired_on.get("right", False),
+                "hs_color": pair.side_hs_color("both"),
+                "running_effect": pair.running_effect,
+            }
+        return {"rooms": rooms}

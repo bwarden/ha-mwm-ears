@@ -237,6 +237,60 @@ class AdoptionTests(unittest.TestCase):
         self.assertGreater(h.hub.last_beacon_at, 0)
 
 
+class CrossRoomIsolationTests(unittest.TestCase):
+    """Foreign commands on one receiver must not mutate pairs in other rooms."""
+
+    def test_foreign_command_scoped_to_receiver(self):
+        hub = ears.ObservedHub()
+        # Two pairs in different rooms, each bound to a different receiver.
+        pair_a = ears.EarPairState(
+            lambda f, rc=0: None, repeat_gap_s=0,
+        )
+        pair_a.receiver_entity = "infrared.receiver_a"
+        pair_b = ears.EarPairState(
+            lambda f, rc=0: None, repeat_gap_s=0,
+        )
+        pair_b.receiver_entity = "infrared.receiver_b"
+        hub.pairs = [pair_a, pair_b]
+
+        # A foreign wand command arrives on receiver_a only.
+        phrase = bytes.fromhex("9619102410D24E03")  # pulsating red
+        hub.ingest([build_frame(phrase)], receiver="infrared.receiver_a")
+
+        # pair_a should be adopted; pair_b untouched.
+        self.assertEqual(pair_a.running_effect, "wand program: pulsating red")
+        self.assertTrue(all(pair_a.desired_on.values()))
+        self.assertIsNone(pair_b.running_effect)
+        self.assertFalse(any(pair_b.desired_on.values()))
+
+    def test_beacon_does_not_mutate_any_pair(self):
+        hub = ears.ObservedHub()
+        pair = ears.EarPairState(
+            lambda f, rc=0: None, repeat_gap_s=0,
+        )
+        pair.receiver_entity = "infrared.receiver_a"
+        hub.pairs = [pair]
+
+        hub.ingest([build_frame([0x42, 0x00, 0x00, 0x48, 0x88, 0x0C, 0x40])])
+        self.assertIsNone(pair.running_effect)
+        self.assertFalse(any(pair.desired_on.values()))
+
+    def test_receiver_none_updates_all_pairs(self):
+        hub = ears.ObservedHub()
+        pair_a = ears.EarPairState(
+            lambda f, rc=0: None, repeat_gap_s=0,
+        )
+        pair_b = ears.EarPairState(
+            lambda f, rc=0: None, repeat_gap_s=0,
+        )
+        hub.pairs = [pair_a, pair_b]
+
+        phrase = bytes.fromhex("9619102410D24E03")
+        hub.ingest([build_frame(phrase)])  # no receiver specified
+        self.assertTrue(all(pair_a.desired_on.values()))
+        self.assertTrue(all(pair_b.desired_on.values()))
+
+
 class WandCommandTests(unittest.TestCase):
     """96 19 wand phrases decode to programs/colours and drive adoption."""
 

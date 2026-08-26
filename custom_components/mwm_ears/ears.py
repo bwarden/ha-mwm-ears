@@ -84,7 +84,10 @@ class EarPairState:
         self._transmit = transmit
         self.repeat_gap_s = repeat_gap_s
         self._clock = clock
+        self.receiver_entity: str | None = None  # set by __init__ setup
         self.codes: dict[str, int] = {LEFT: EAR_OFF_CODE, RIGHT: EAR_OFF_CODE}
+        self.room_name: str = ""  # set by __init__ setup
+        self._last_active_at: float = 0.0
         # Active PALETTE shade per side (None = simple/unknown). Palette
         # shades are tracked separately from simple codes because a side
         # can hold either; TSV has both-ears AND right-only palette forms.
@@ -102,6 +105,7 @@ class EarPairState:
     # -- display ---------------------------------------------------------
 
     def _notify(self) -> None:
+        self._last_active_at = self._clock()
         for callback in self.listeners:
             callback()
 
@@ -522,14 +526,25 @@ class ObservedHub:
         for callback in self.listeners:
             callback()
 
-    def ingest(self, frames: list[bytes]) -> None:
-        """Feed decoded frames from ANY receiver into the shared view.
+    def ingest(
+        self, frames: list[bytes], *, receiver: str | None = None,
+    ) -> None:
+        """Feed decoded frames from ONE receiver into the shared view.
+
+        *receiver* is the entity_id of the receiver that heard the signal.
+        When provided, foreign-command adoption and echo detection are
+        scoped to pairs bound to that receiver, preventing cross-room
+        pollution when multiple config entries share one hub.
 
         A-B-A' bundles are ONE logical command: the tracker sees all
         three passes, but only the phrase (frames[0]) drives adoption --
         the companion block is parameters, not a command, and A' merely
         repeats A with a rolling counter tail.
         """
+        target_pairs = [
+            p for p in self.pairs
+            if receiver is None or p.receiver_entity == receiver
+        ]
         valid: list[bytes] = []
         for frame in frames:
             ok, _ = frame_is_valid(frame)
@@ -559,13 +574,13 @@ class ObservedHub:
             if desc["kind"] == "beacon":
                 continue
             frame_hex = frame.hex().upper()
-            if any(pair.matches_recent(frame_hex) for pair in self.pairs):
+            if any(pair.matches_recent(frame_hex) for pair in target_pairs):
                 continue  # our own echo bouncing back
             # Foreign command (wand / other transmitter): mirror what we
             # understood into the displayed state, then suspend repeats
             # until the next explicit user action.
             self.last_foreign_summary = f"[{desc['kind']}] {desc['summary']}"
-            for pair in self.pairs:
+            for pair in target_pairs:
                 pair.adopt_decoded(frame)
                 pair.suspend(f"foreign command: {desc['summary']}")
         if changed:

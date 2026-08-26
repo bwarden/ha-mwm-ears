@@ -66,7 +66,9 @@ def _get_hub(hass: HomeAssistant) -> ObservedHub:
     return data[HUB_KEY]
 
 
-def _make_signal_handler(receiver: ReceiverData, hub: ObservedHub):
+def _make_signal_handler(
+    receiver: ReceiverData, hub: ObservedHub, receiver_entity: str | None = None,
+):
     """Decode received raw timings into frames for sensors + hub."""
 
     @callback
@@ -84,7 +86,7 @@ def _make_signal_handler(receiver: ReceiverData, hub: ObservedHub):
         if not frames_out:
             return  # census kept the evidence; nothing MWM-shaped here
         receiver.ingest(frames_out)
-        hub.ingest(frames_out)
+        hub.ingest(frames_out, receiver=receiver_entity)
 
     return handler
 
@@ -171,6 +173,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                     raise
 
         pair = EarPairState(transmit)
+        pair.receiver_entity = receiver_entity
+        pair.room_name = entry.data["name"]
         runtime["pair"] = pair
         hub.pairs.append(pair)
 
@@ -188,7 +192,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         def _subscribe() -> None:
             sub_state["unsub"] = infrared.async_subscribe_receiver(
                 hass, receiver_entity,
-                _make_signal_handler(receiver_data, hub),
+                _make_signal_handler(receiver_data, hub, receiver_entity),
             )
 
         def _teardown_sub() -> None:
