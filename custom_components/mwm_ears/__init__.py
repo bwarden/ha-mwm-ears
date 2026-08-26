@@ -40,6 +40,7 @@ from homeassistant.helpers.event import (
 
 from ._mwm import MwmCommand, decode_timings
 from .const import (
+    BEACON_TIMEOUT_S,
     CONF_EMITTER_ENTITY,
     CONF_RECEIVER_ENTITY,
     DOMAIN,
@@ -284,6 +285,22 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         )
 
         entry.async_on_unload(_teardown_sub)
+
+    # Beacon-silence watchdog: shared across all entries (runs once).
+    hub = _get_hub(hass)
+    _BEACON_WDT_KEY = "_beacon_watchdog"
+    if _BEACON_WDT_KEY not in hass.data[DOMAIN]:
+
+        async def _beacon_watchdog(_now) -> None:
+            if hub.check_beacon_timeout(BEACON_TIMEOUT_S):
+                hub._notify()
+
+        hass.data[DOMAIN][_BEACON_WDT_KEY] = True
+        entry.async_on_unload(
+            async_track_time_interval(
+                hass, _beacon_watchdog, timedelta(seconds=30),
+            )
+        )
 
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
     return True

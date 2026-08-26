@@ -19,4 +19,9 @@ HUB_KEY = "observed_hub"
 # Seconds between the spaced re-transmissions of one command. Ear receivers
 # drop cold single frames (AGC needs a warm-up edge); genuine wands repeat,
 # and ir-mwm-send proved 2x @ ~1.8 s against these very ears.
-REPEAT_GAP_S = 1.8  # one shared device across transmitter+receiver entries
+REPEAT_GAP_S = 1.8
+
+# Seconds of beacon silence after which ears are considered idle.
+# MWM peripherals beacon every ~8 s when active and go quiet after
+# ~120 s idle, so 130 s gives headroom for reception gaps.
+BEACON_TIMEOUT_S = 130

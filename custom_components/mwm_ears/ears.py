@@ -516,6 +516,7 @@ class ObservedHub:
         self.last_summary = ""
         self.last_foreign_summary = ""
         self._clock = clock
+        self.last_beacon_at: float = 0.0
 
     def _notify(self) -> None:
         for callback in self.listeners:
@@ -550,6 +551,7 @@ class ObservedHub:
             if desc["kind"] == "beacon":
                 # Idle sync: effect display only, no takeover -- but the
                 # pair's effect label should track what the room runs.
+                self.last_beacon_at = self._clock()
                 demo = desc.get("demo_effect")
                 if demo is not None:
                     label = effect_label(demo)
@@ -576,6 +578,25 @@ class ObservedHub:
     def snapshot(self) -> str:
         snap = self.tracker.snapshot()
         return snap if snap else "unknown"
+
+    def check_beacon_timeout(self, timeout_s: float) -> bool:
+        """Clear ear state when no beacon has arrived for *timeout_s*.
+
+        Returns True if state was changed (listeners should be notified).
+        """
+        if self.last_beacon_at == 0:
+            return False  # never heard a beacon yet; don't clamp
+        elapsed = self._clock() - self.last_beacon_at
+        if elapsed < timeout_s:
+            return False
+        changed = False
+        for pair in self.pairs:
+            if any(pair.desired_on.values()) or pair.running_effect:
+                pair.running_effect = None
+                pair.desired_on = {LEFT: False, RIGHT: False}
+                pair._notify()
+                changed = True
+        return changed
 
 
 class ReceiverData:
