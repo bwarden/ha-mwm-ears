@@ -85,16 +85,56 @@ class MwmEarsConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
 
 class MwmEarsOptionsFlow(config_entries.OptionsFlow):
-    """Rename an instance without re-selecting hardware."""
+    """Reconfigure an instance: rename and/or re-select emitter/receiver."""
 
     def __init__(self, config_entry: config_entries.ConfigEntry) -> None:
         self.entry = config_entry
 
     async def async_step_init(self, user_input: dict | None = None) -> FlowResult:
+        errors: dict[str, str] = {}
+
         if user_input is not None:
-            return self.async_create_entry(title="", data=user_input)
-        current = self.entry.data.get("name", "")
+            emitter = user_input.get(CONF_EMITTER_ENTITY) or _NONE
+            rx = user_input.get(CONF_RECEIVER_ENTITY) or _NONE
+            if not emitter and not rx:
+                errors["base"] = "need_one"
+            else:
+                new_data: dict = {
+                    "name": user_input["name"].strip() or "MWM Ears",
+                }
+                if emitter:
+                    new_data[CONF_EMITTER_ENTITY] = emitter
+                if rx:
+                    new_data[CONF_RECEIVER_ENTITY] = rx
+
+                self.hass.config_entries.async_update_entry(
+                    self.entry, data=new_data,
+                )
+                self.hass.async_create_task(
+                    self.hass.config_entries.async_reload(self.entry.entry_id),
+                )
+                return self.async_create_entry(title="", data={})
+
+        emitters = infrared.async_get_emitters(self.hass)
+        receivers = infrared.async_get_receivers(self.hass)
+        current_name = self.entry.data.get("name", "")
+        current_emitter = self.entry.data.get(CONF_EMITTER_ENTITY, _NONE)
+        current_rx = self.entry.data.get(CONF_RECEIVER_ENTITY, _NONE)
+
+        schema: dict = {
+            vol.Required("name", default=current_name): str,
+        }
+        if emitters:
+            schema[vol.Optional(CONF_EMITTER_ENTITY, default=current_emitter)] = (
+                vol.In(_choices(self.hass, emitters))
+            )
+        if receivers:
+            schema[vol.Optional(CONF_RECEIVER_ENTITY, default=current_rx)] = vol.In(
+                _choices(self.hass, receivers)
+            )
+
         return self.async_show_form(
             step_id="init",
-            data_schema=vol.Schema({vol.Required("name", default=current): str}),
+            data_schema=vol.Schema(schema),
+            errors=errors,
         )
