@@ -117,10 +117,13 @@ class EarPairState:
     def side_hs_color(self, side: str) -> tuple[float, float] | None:
         """Return (hue, saturation) for the ear's current colour, or None.
 
-        For BOTH, returns the colour only when left and right agree
-        (normal after a both-ears command); returns None when they
-        diverge (e.g. after a foreign right-only command).
+        Returns None when an effect program is running (the effect
+        controls colour, not stored codes) or when the ear is off.
+        For BOTH, returns the colour only when left and right agree;
+        returns None when they diverge.
         """
+        if self.running_effect is not None:
+            return None
         from homeassistant.util.color import color_RGB_to_hs
 
         def _hs_for(s: str) -> tuple[float, float] | None:
