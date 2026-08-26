@@ -229,7 +229,6 @@ class MwmActiveEarsSensor(SensorEntity):
     _attr_icon = "mdi:ear-hearing"
     _attr_unique_id = f"{DOMAIN}_active_ears"
     _attr_name = "MWM Active Rooms"
-    _attr_labels = {"mwm"}
 
     def __init__(self, hub: ObservedHub) -> None:
         self._hub = hub

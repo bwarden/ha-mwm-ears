@@ -14,7 +14,6 @@ from homeassistant.components.light import (
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.device_registry import DeviceInfo
-from homeassistant.helpers import entity_registry as er
 from homeassistant.util.color import color_hs_to_RGB
 
 from ._mwm import nearest_entry
@@ -121,14 +120,10 @@ class MwmEarLight(LightEntity):
             model="MWM/GWTS infrared room controller",
             sw_version=INTEGRATION_VERSION,
         )
-        self._attr_labels = {"mwm"}
 
     async def async_added_to_hass(self) -> None:
         self._store.listeners.append(self.async_write_ha_state)
         self._hub.listeners.append(self.async_write_ha_state)
-        if self.entity_id:
-            registry = er.async_get(self.hass)
-            registry.async_update(self.entity_id, labels={"mwm"})
 
     async def async_will_remove_from_hass(self) -> None:
         for listeners in (self._store.listeners, self._hub.listeners):
@@ -232,7 +227,6 @@ class MwmAggregateLight(LightEntity):
     _attr_supported_features = LightEntityFeature.EFFECT
     _attr_name = "MWM All Rooms"
     _attr_unique_id = f"{DOMAIN}_aggregate_light"
-    _attr_labels = {"mwm"}
 
     def __init__(self, hub: ObservedHub) -> None:
         self._hub = hub
@@ -246,9 +240,6 @@ class MwmAggregateLight(LightEntity):
 
     async def async_added_to_hass(self) -> None:
         self._hub.listeners.append(self.async_write_ha_state)
-        if self.entity_id:
-            registry = er.async_get(self.hass)
-            registry.async_update(self.entity_id, labels={"mwm"})
 
     async def async_will_remove_from_hass(self) -> None:
         try:

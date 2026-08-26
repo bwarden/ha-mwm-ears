@@ -307,6 +307,19 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         )
 
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
+
+    # Apply "mwm" label to all entities created by this entry so they
+    # are filterable in automations and dashboards.  Done here rather
+    # than in entity __init__/async_added_to_hass because the registry
+    # is not ready until after platform setup completes.
+    from homeassistant.helpers import entity_registry as er
+
+    registry = er.async_get(hass)
+    for entity_id in er.async_entries_for_config_entry(
+        registry, entry.entry_id,
+    ):
+        registry.async_update(entity_id, labels={"mwm"})
+
     return True
 
 
