@@ -34,6 +34,7 @@ from homeassistant.const import STATE_UNAVAILABLE, STATE_UNKNOWN
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.exceptions import ConfigEntryNotReady
 from homeassistant.helpers.event import (
+    async_call_later,
     async_track_state_change_event,
     async_track_time_interval,
 )
@@ -309,14 +310,13 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
 
     # Apply "mwm" label to all mwm_ears entities once all entries have
-    # loaded.  Entries load concurrently so a single entry's setup
-    # cannot see every entity yet; defer to the HA started event.
+    # loaded.  Use a one-shot timer to defer past concurrent entry setup.
     _LABEL_DONE = f"{DOMAIN}_labels_applied"
     if _LABEL_DONE not in hass.data[DOMAIN]:
         hass.data[DOMAIN][_LABEL_DONE] = True
 
         @callback
-        def _apply_labels(_event) -> None:
+        def _apply_labels(_now) -> None:
             from homeassistant.helpers import entity_registry as er
 
             registry = er.async_get(hass)
@@ -324,7 +324,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 if reg_entry.platform == DOMAIN:
                     registry.async_update(eid, labels={"mwm"})
 
-        hass.bus.async_listen_once("homeassistant_started", _apply_labels)
+        async_call_later(hass, 5, _apply_labels)
 
     return True
 
