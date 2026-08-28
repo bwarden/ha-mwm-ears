@@ -101,7 +101,7 @@ class MwmEarLight(LightEntity):
         self._side = side
         base = entry.data["name"]
         suffix = (
-            f"{_SIDE_NAMES[side]} Ear" if side != BOTH else "Both Ears"
+            "Ears" if side == BOTH else f"{_SIDE_NAMES[side]} Ear"
         )
         self._attr_name = f"{base} {suffix}"
         self._attr_unique_id = f"{entry.entry_id}-{side}"

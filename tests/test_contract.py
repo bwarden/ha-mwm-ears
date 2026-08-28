@@ -179,7 +179,7 @@ class VersionContract(unittest.TestCase):
 
 
 class EffectsSelectorContract(unittest.TestCase):
-    """Effect programs are room-wide: only Both Ears may offer them."""
+    """Effect programs are room-wide: only the Ears entity offers them."""
 
     def test_effect_list_gated_on_both_side(self):
         light = _read("light.py")

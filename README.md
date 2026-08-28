@@ -32,12 +32,13 @@ Integration -> "MWM Ears". One integration instance represents ONE MWM
 room and binds two infrared entities -- usually two halves of the same IR
 box, which the form suggests together; either half is optional:
 
-- **Infrared emitter** -> exposes *Both Ears*, *Left Ear* and *Right
-  Ear* lights driving every MWM ear in range as one paired set (all
+- **Infrared emitter** -> exposes *Ears*, *Left Ear* and *Right Ear*
+  lights driving every MWM ear in range as one paired set (all
   three share a device and always agree -- they are views over one
-  room-state store). *Both Ears* maps to the protocol's native both-ear
+  room-state store). *Ears* maps to the protocol's native both-ear
   frames; *Right Ear* to the right-only frames; *Left Ear* is the
   composed proxy (both -> left colour, then right-only restore).
+  *Ears* is on when either ear is on, so turning it off turns both off.
   - Any colour from HA's picker snaps to the nearest representable shade
     using hue-dominant matching (hue drift is penalised far more than
     brightness drift, so dark/muted requests stay in family instead of
