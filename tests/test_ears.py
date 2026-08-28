@@ -251,6 +251,73 @@ class AdoptionTests(unittest.TestCase):
         self.assertTrue(all(h.pair.desired_on.values()))
 
 
+class EnforcementTests(unittest.TestCase):
+    """Enforce-ears switch mode: periodic re-assert + silence assume-off."""
+
+    def test_enforce_tick_reasserts_held_state_single_pass(self):
+        h = HubHarness()
+        run(h.pair.apply_simple_both(0x64))
+        h.pair.set_enforce(True)
+        h.calls.clear()
+        run(h.pair.enforce_tick())
+        # Re-assert sends the held state once (no extra repeats): 90 64.
+        self.assertEqual(h.calls, [(build_frame([0x64]).hex().upper(), 0)])
+
+    def test_enforce_tick_sends_nothing_when_passive(self):
+        h = HubHarness()
+        run(h.pair.apply_simple_both(0x64))
+        self.assertFalse(h.pair.enforce)  # switch defaults OFF
+        h.calls.clear()
+        run(h.pair.enforce_tick())
+        self.assertEqual(h.calls, [])
+
+    def test_enforce_tick_sends_nothing_when_ears_off(self):
+        h = HubHarness()
+        run(h.pair.apply_simple_both(ears.EAR_OFF_CODE))
+        h.pair.set_enforce(True)
+        h.calls.clear()
+        run(h.pair.enforce_tick())
+        self.assertEqual(h.calls, [])
+
+    def test_assume_off_only_while_enforcing_and_silent(self):
+        h = HubHarness()
+        # Passive pair: never assumes off on a short gap.
+        run(h.pair.apply_simple_both(0x64))
+        self.assertFalse(h.pair.assume_off_if_silent())
+        # Enforcing pair with no beacon heard yet: don't clamp.
+        h.pair.set_enforce(True)
+        self.assertFalse(h.pair.assume_off_if_silent())
+        # Hear a beacon (liveness), then go quiet past the assume-off gap.
+        h.now += 1.0
+        h.hub.ingest([build_frame([0x42, 0x00, 0x00, 0x48, 0x88, 0x0C, 0x40])])
+        h.now += ears.ENFORCE_ASSUME_OFF_S + 1.0
+        self.assertTrue(h.pair.assume_off_if_silent())
+        self.assertFalse(any(h.pair.desired_on.values()))
+        self.assertIsNone(h.pair.running_effect)
+        # Enforcing again with fresh beacon < gap: stays on.
+        h.hub.ingest([build_frame([0x42, 0x00, 0x00, 0x48, 0x88, 0x0C, 0x40])])
+        self.assertTrue(all(h.pair.desired_on.values()))
+        self.assertFalse(h.pair.assume_off_if_silent())
+
+    def test_foreign_command_overridden_while_enforcing(self):
+        h = HubHarness()
+        run(h.pair.apply_simple_both(0x64))  # red
+        h.pair.set_enforce(True)
+        # A foreign blue command arrives while we enforce.
+        h.now += 1.0
+        h.hub.ingest([build_frame([0x61])])
+        self.assertEqual(h.pair.codes, {ears.LEFT: 0x64, ears.RIGHT: 0x64})
+        self.assertIsNone(h.pair.suspended_by)
+        self.assertTrue(all(h.pair.desired_on.values()))
+        # Non-enforcing pair adopts the same foreign command.
+        h2 = HubHarness()
+        run(h2.pair.apply_simple_both(0x64))
+        h2.now += 1.0
+        h2.hub.ingest([build_frame([0x61])])
+        self.assertEqual(h2.pair.codes, {ears.LEFT: 0x61, ears.RIGHT: 0x61})
+        self.assertIsNotNone(h2.pair.suspended_by)
+
+
 class CrossRoomIsolationTests(unittest.TestCase):
     """Foreign commands on one receiver must not mutate pairs in other rooms."""
 

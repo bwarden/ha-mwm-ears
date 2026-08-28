@@ -71,6 +71,18 @@ OURS_WINDOW_S = 15.0
 # beaconing and correctly shows on again after the window.
 BEACON_STALE_AFTER_COMMAND_S = 15.0
 
+# Enforcement mode: when the per-room "Enforce Ears" switch is ON we take
+# sole control of the ears -- re-asserting the light-entity state every
+# ENFORCE_INTERVAL_S and NOT adopting foreign commands (a wand or other
+# transmitter is overridden by the next re-assert).  If no beacon is heard
+# for ENFORCE_ASSUME_OFF_S while enforcing, we assume the ears powered off
+# and reflect that (light entities go off); a later beacon proves they are
+# alive again and enforcement resumes the held colour.  The passive mode
+# (switch OFF) keeps the existing reflect-what-we-hear behaviour and the
+# long BEACON_TIMEOUT_S idle rule.
+ENFORCE_INTERVAL_S = 10
+ENFORCE_ASSUME_OFF_S = 45
+
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -114,6 +126,11 @@ class EarPairState:
         # Last time we transmitted a state-changing command.  Beacons heard
         # shortly afterwards may be stale (see BEACON_STALE_AFTER_COMMAND_S).
         self._last_command_at: float = 0.0
+        # Enforcement mode flag plus the last time this pair heard a beacon.
+        # While enforcing we re-assert state every ENFORCE_INTERVAL_S and
+        # assume the ears powered off after ENFORCE_ASSUME_OFF_S of silence.
+        self.enforce = False
+        self._last_beacon_at: float = 0.0
 
     # -- display ---------------------------------------------------------
 
@@ -188,6 +205,54 @@ class EarPairState:
         if self.suspended_by is not None:
             self.suspended_by = None
             self._notify()
+
+    # -- enforcement mode ------------------------------------------------
+
+    def set_enforce(self, on: bool) -> None:
+        """Turn enforcement of the light-entity state on or off.
+
+        ON: we become the sole authority -- foreign commands are overridden
+        and the held state is re-asserted periodically (see
+        async_enforce_tick).  OFF: revert to passive reflect-what-we-hear.
+        The flag is purely user-controlled; it is not cleared by assume-off.
+        """
+        if self.enforce != on:
+            self.enforce = on
+            self.resume()  # enforcement pauses any suspension
+            self._notify()
+
+    def assume_off_if_silent(self) -> bool:
+        """While enforcing, turn the ears off after a beacon gap.
+
+        Used the per-pair last-beacon timestamp so rooms sharing one hub
+        don't keep each other alive.  Returns True if state changed (the
+        caller should notify HA).  No-op in passive mode.
+        """
+        if not self.enforce:
+            return False
+        if not any(self.desired_on.values()):
+            return False
+        if self._last_beacon_at == 0:
+            return False  # never heard a beacon yet; don't clamp
+        if self._clock() - self._last_beacon_at < ENFORCE_ASSUME_OFF_S:
+            return False
+        self.running_effect = None
+        self.desired_on = {LEFT: False, RIGHT: False}
+        self._notify()
+        return True
+
+    async def enforce_tick(self) -> None:
+        """One enforcement heartbeat: re-assert the held state if on.
+
+        Re-asserts with a single transmission (one pass, no extra repeats):
+        the command recurs every ENFORCE_INTERVAL_S so ears that drift back
+        to demo/standalone mode are pulled onto our colour again.  A dead
+        pair (assumed-off) has desired_on False and sends nothing here.
+        """
+        if not self.enforce:
+            return
+        if any(self.desired_on.values()):
+            await self._send_state(0)
 
     # -- commands ---------------------------------------------------------
 
@@ -594,6 +659,10 @@ class ObservedHub:
                     # beacons arriving AFTER the stale window (i.e. the
                     # ears genuinely kept/woke beaconing) flip desired_on.
                     now = self._clock()
+                    # Every beacon (ours or foreign) proves the ears are
+                    # alive; enforcement uses this per-pair liveness so a
+                    # room sharing the hub is not kept alive by another.
+                    pair._last_beacon_at = now
                     stale = (
                         now - pair._last_command_at
                         <= BEACON_STALE_AFTER_COMMAND_S
@@ -612,11 +681,16 @@ class ObservedHub:
             frame_hex = frame.hex().upper()
             if any(pair.matches_recent(frame_hex) for pair in target_pairs):
                 continue  # our own echo bouncing back
-            # Foreign command (wand / other transmitter): mirror what we
-            # understood into the displayed state, then suspend repeats
-            # until the next explicit user action.
+            # Foreign command (wand / other transmitter): in passive mode,
+            # mirror what we understood into the displayed state, then
+            # suspend repeats until the next explicit user action.  While a
+            # room is ENFORCING we take sole control: we record the foreign
+            # traffic for the diagnostic sensor but do not adopt it or pause
+            # -- the next enforce_tick re-asserts our held state.
             self.last_foreign_summary = f"[{desc['kind']}] {desc['summary']}"
             for pair in target_pairs:
+                if pair.enforce:
+                    continue
                 pair.adopt_decoded(frame)
                 pair.suspend(f"foreign command: {desc['summary']}")
         if changed:
@@ -638,6 +712,8 @@ class ObservedHub:
             return False
         changed = False
         for pair in self.pairs:
+            if pair.enforce:
+                continue  # enforcement owns its own assume-off rule
             if any(pair.desired_on.values()) or pair.running_effect:
                 pair.running_effect = None
                 pair.desired_on = {LEFT: False, RIGHT: False}
