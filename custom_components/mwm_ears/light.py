@@ -129,7 +129,7 @@ class MwmEarLight(LightEntity):
         if self._side == BOTH:
             return (
                 self._store.desired_on[LEFT]
-                and self._store.desired_on[RIGHT]
+                or self._store.desired_on[RIGHT]
             )
         return self._store.desired_on[self._side]
 
