@@ -124,3 +124,74 @@ cd python && PYTHONPATH=. python3 -m unittest discover -s tests -v
 `tests/_bootstrap.py` loads `_mwm` standalone by path, and `ears.py`
 falls back to the same alias when loaded outside a package, keeping
 everything testable without homeassistant installed.
+
+## Rig research tools
+
+The rig research tools under `../tools/` drive and analyse real ears on
+the MQTT test rig, standalone (no Home Assistant). Full documentation is
+in `../README.md`; the shared `_bootstrap.py` / `_mqtt.py` helpers and
+their usage are described there. The set includes interactive senders,
+beacon capture/analysis, colour-cycle testing, and offline log decoding.
+
+### colour cycle test (`../tools/color_cycle.py`)
+
+Sends every simple colour, palette shade, composite frame, and built-in
+effect one at a time via MQTT (Tasmota IRsend), prompting for free-form
+notes after each command. Results are logged to a JSON file for later
+analysis.
+
+Each command is sent **3 times** (configurable) with a short delay
+between repeats so the human observer does not miss the change on real
+ears.
+
+```
+python3 ../tools/color_cycle.py                       # defaults: repeat=3, delay=0.3s
+python3 ../tools/color_cycle.py --repeat 5 --repeat-delay 0.5
+python3 ../tools/color_cycle.py --log session.json
+```
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--log FILE` | `color_cycle_YYYYMMDD_HHMMSS.json` | Output log path |
+| `--mqtt-json PATH` | `~/.config/ir-remote-tools/mqtt.json` | MQTT config |
+| `--repeat N` | `3` | Send each command N times for human visibility |
+| `--repeat-delay SECS` | `0.3` | Seconds between repeated sends |
+
+The log is a JSON object with an `entries` array; each entry has `t`,
+`kind`, `name`, `hex`, `payload`, `repeat`, and `notes` fields.
+
+### offline analysis (`../tools/analyze_log.py`)
+
+Parses a log produced by `color_cycle.py` (or a manually assembled
+equivalent) and attempts to **decipher every observed command**. Emits a
+structured analysis log with full decoding where possible, or a note
+that the command could not be fully decoded.
+
+Supports three input modes:
+
+- `--log FILE` -- a JSON log from `color_cycle.py`
+- `--frames FILE` -- plain-text hex frame strings, one per line
+  (blank lines and `#` comments ignored)
+- `--timings FILE` -- a JSON file containing a top-level list of
+  integer timing arrays (each in microseconds, as received from the
+  Tasmota MQTT receiver topic)
+
+```
+python3 ../tools/analyze_log.py --log color_cycle.json
+python3 ../tools/analyze_log.py --log color_cycle.json --format json --out analysis.json
+python3 ../tools/analyze_log.py --frames captures.txt
+python3 ../tools/analyze_log.py --timings raw_captures.json --format text
+```
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--log FILE` | | JSON log from `color_cycle.py` |
+| `--frames FILE` | | Plain-text hex frame strings |
+| `--timings FILE` | | JSON timing arrays |
+| `--format text\|json` | `text` | Output format |
+| `--out FILE` | stdout | Output file |
+
+Each record in the output contains the raw input, decoded frame
+description (kind, summary, tokens), and bundle analysis where
+applicable. Commands that cannot be decoded are flagged with
+`[NO DECODE]` or `[INVALID]` so they are easy to find in a long session.
