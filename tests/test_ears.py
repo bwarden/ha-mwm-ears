@@ -226,7 +226,8 @@ class AdoptionTests(unittest.TestCase):
     def test_stale_beacon_within_window_does_not_relight_after_off(self):
         """OFF must stick: a beacon heard right after our own command was in
         flight when the ears processed the off, so it must not set
-        desired_on back to True (was slide-back-the-aggregate bug)."""
+        desired_on back to True (was slide-back bug: the off stuck on the
+        hardware but the next overheard beacon re-lit the entity)."""
         h = HubHarness()
         run(h.pair.apply_simple_both(ears.EAR_OFF_CODE))
         self.assertFalse(any(h.pair.desired_on.values()))

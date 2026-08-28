@@ -73,7 +73,7 @@ class EntityNamingContract(unittest.TestCase):
         src = _read("sensor.py")
         classes = re.findall(r"^class (Mwm\w+)\(", src, re.M)
         self.assertEqual(
-            len(classes), 5,
+            len(classes), 4,
             f"unexpected sensor class list: {classes}",
         )
         for cls in classes:

@@ -66,7 +66,7 @@ OURS_WINDOW_S = 15.0
 # the command) rather than as proof the ears are really on.  Without this,
 # an explicit "all off" races the ear's last pre-off beacon: the off sticks
 # on the hardware but the very next overheard beacon force-sets desired_on
-# back to True and the aggregate entity slides back on.  About one beacon
+# back to True and the entity slides back on.  About one beacon
 # interval (~7-15 s) rides out the race; a genuinely re-woken ear keeps
 # beaconing and correctly shows on again after the window.
 BEACON_STALE_AFTER_COMMAND_S = 15.0
