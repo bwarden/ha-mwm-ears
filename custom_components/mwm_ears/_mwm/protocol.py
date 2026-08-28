@@ -7,16 +7,30 @@ Frame layout (docs/mwm-show-protocol.md section 2):
     +--------+---------------------------+--------+
     total length = L + 3 bytes
 
-CRC-8/Dallas (poly 0x8C reflected, init 0). ``55 AA`` system messages use an
+CRC-8/Dallas (poly 0x8C reflected, init 0).  ``55 AA`` system messages use an
 additive checksum over the payload (bytes after AA) mod 256 instead.
 
 Signal: 2400 bps UART/IRDA-SIR over a 38 kHz carrier -- per byte a start mark
-tick, eight data bits LSB-first with space=1, a stop space tick; equal
-adjacent levels merge into single runs; the message ends with the ~30 ms
-inter-command gap. This mirrors web/src/lib/protocol/mwm.ts toPronto().
+tick, eight data bits LSB-first with space=1, a stop space tick; equal adjacent
+levels merge into single runs; the message ends with the ~30 ms inter-command
+gap.  This mirrors web/src/lib/protocol/mwm.ts toPronto().
+
+Sources of truth:
+    docs/mwm-show-protocol.md         -- Frame layout, length rule, CRC-8,
+        55 AA additive checksum, timing constants (TICK_US, FOOTER_GAP_US,
+        CARRIER_HZ).
+    web/src/lib/protocol/mwm.ts       -- TypeScript reference for toPronto()
+        and timings_for_frame(); this module mirrors its tick-merging and
+        sign convention.
+    IRremoteESP8266 (decodeMWM)        -- Upstream algorithm confirming
+        2400 bps UART encoding and carrier frequency.
+    docs/mwm-gwts-protocol.md      -- Physical-layer timing measurements
+        from the rig (mark/space widths, gap duration).
 """
 
 from __future__ import annotations
+
+import re
 
 TICK_US = 417
 FOOTER_GAP_US = 30000
@@ -143,3 +157,172 @@ def parse_frame_hex(text: str) -> list[bytes]:
         if packed:
             frames.append(bytes.fromhex(packed))
     return frames
+
+
+# ---------------------------------------------------------------------------
+# Tasmota RawData parser (compact letter-coded timings)
+# ---------------------------------------------------------------------------
+
+def _tasmota_signed(text: str) -> list[int]:
+    """Decode Tasmota RawData into signed-microsecond timings.
+
+    Accepts compact letter-coded form (``+9185-4490+650...jH``), comma form,
+    or the letter-coded equivalent. The compact encoding assigns the letters
+    A-Z to the first 26 distinct timing magnitudes in order of first
+    appearance; a repeated value is written as that letter, uppercase for a
+    mark (signal HIGH/positive) and lowercase for a space (LOW/negative).
+    Magnitudes are multiples of 5 us. Explicit ``+/-N`` tokens are always
+    written out numerically.
+
+    Port of Protocol::IR::Format::Tasmota::_decode_compact
+    (perl/lib/Protocol/IR/Format/Tasmota.pm), which mirrors the encoder used
+    by Tasmota's ``RawData`` field.
+
+    Raises ValueError on undefined letters or empty input.
+    """
+    tokens = re.findall(r"([+\-]\d+|[A-Za-z])", text)
+    if not tokens:
+        raise ValueError("Tasmota compact format contains no timing data")
+
+    values: list[int] = []
+    rev: dict[str, int] = {}
+    count = 0
+    for tok in tokens:
+        m = re.match(r"^([+\-])(\d+)$", tok)
+        if m:
+            mag = int(m.group(2))
+            if mag not in rev and count < 26:
+                rev[chr(ord("A") + count)] = mag
+                count += 1
+            sign = 1 if m.group(1) == "+" else -1
+            values.append(sign * mag)
+        else:
+            key = tok.upper()
+            if key not in rev:
+                raise ValueError(
+                    f"Tasmota compact format references undefined timing letter '{tok}'"
+                )
+            mag = rev[key]
+            sign = 1 if tok.isupper() else -1
+            values.append(sign * mag)
+    if not values:
+        raise ValueError("Tasmota compact format contains no timing data")
+    return values
+
+
+def tasmota_timings(rawdata: str) -> list[int]:
+    """Convert a Tasmota IR timing field to signed-microsecond runs.
+
+    Handles compact letter-coded, comma-separated, and ``IRsend <freq>,...``
+    forms. Numbers are assigned positive for marks (even index) and negative
+    for spaces (odd index), matching the IR framework's alternate-sign
+    convention consumed by decode_timings.
+
+    The two inputs have different carriers:
+    - ``RawData``/receive payloads come from the IR receiver IC, which has
+      already converted 38 kHz bursts into simple mark/space durations, so
+      they carry NO leading frequency.
+    - ``IRsend <freq>,<timings>`` transmit commands drive the ESP8266 PWM to
+      an actual IR LED, so the leading ``<freq>`` is required (``0`` = the
+      default 38 kHz). It is stripped here.
+    """
+    text = rawdata.strip()
+    text = re.sub(r"^IRsend\s+\d+,?", "", text, flags=re.IGNORECASE)
+    text = re.sub(r"^RawData\s*[=:]\s*\"?", "", text, flags=re.IGNORECASE)
+    text = text.strip().strip('"')
+    if not text:
+        raise ValueError("No Tasmota RawData provided")
+    if "," in text:
+        parts = [p.strip() for p in text.split(",") if p.strip()]
+        return [
+            (1 if i % 2 == 0 else -1) * int(p)
+            for i, p in enumerate(parts)
+        ]
+    return _tasmota_signed(text)
+
+
+# ---------------------------------------------------------------------------
+# Synchronization primitives
+# ---------------------------------------------------------------------------
+
+def build_clock_write(tick: int) -> bytes:
+    """Build a clock-sync frame: 91 0C <tick> <crc>.
+
+    Writes tick value to the sync clock register on all ears in range.
+    Tick is an 8-bit value (0x00-0xFF). The ears use this to align
+    playback phase -- repeating a wand button changes only the tick,
+    and idle beacons update it constantly.
+
+    docs/mwm-show-protocol.md section 3 (Clock-sync field).
+    """
+    return build_frame([0x0C, tick & 0xFF])
+
+
+def build_group_color(
+    group_start: int,
+    group_end: int,
+    color_code: int,
+) -> bytes:
+    """Build a group-addressed colour command.
+
+    Frames ears in the range [group_start, group_end] with the given
+    simple colour code (0x60-0x67). Each ear picks a random group id
+    00-7F at power-up; this targets a contiguous slice.
+
+    Format: 97 20 89 A0 <end> 26 <color> F2 <crc_hi> <crc_lo>
+    (docs/mwm-show-protocol.md section 4, Group addressing).
+
+    group_start is implicit (0x00 for the first group phrase, or the
+    previous group_end+1 for subsequent phrases).
+    """
+    content = [
+        0x20,           # group phrase header
+        0x89,           # group picker (first group uses 89)
+        0xA0, group_end & 0x7F,  # range bounds
+        0x26,           # range close
+        color_code & 0xFF,
+    ]
+    return build_frame(content)
+
+
+def build_group_palette(
+    group_start: int,
+    group_end: int,
+    palette_index: int,
+) -> bytes:
+    """Build a group-addressed palette colour command.
+
+    Like build_group_color but uses the mixed palette (0x0E XX).
+    palette_index is 0x00-0x1D.
+    """
+    content = [
+        0x20,           # group phrase header
+        0x81,           # palette group picker
+        0xA0, group_end & 0x7F,
+        0x26,           # range close
+        0x0E, palette_index & 0x7F,
+    ]
+    return build_frame(content)
+
+
+def decode_beacon_clock(frame: bytes) -> int | None:
+    """Extract the clock tick from a beacon frame.
+
+    Returns the 8-bit tick value, or None if the frame is not a valid
+    beacon. The tick is at content[5] (byte 6 of the content body,
+    after the 0x99 header).
+    """
+    if len(frame) < 2:
+        return None
+    header = frame[0]
+    if (header & 0xF0) != 0x90:
+        return None
+    content = list(frame[1:-1])  # strip header and CRC
+    if len(content) < 7:
+        return None
+    # Beacon structure: 42 00 00 48 ss 0C t [D0 0E ??]
+    if content[:3] != [0x42, 0x00, 0x00]:
+        return None
+    if content[5] != 0x0C:
+        return None
+    return content[6]

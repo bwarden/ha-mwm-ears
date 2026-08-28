@@ -148,5 +148,103 @@ class ParseHexTests(unittest.TestCase):
         self.assertEqual(parse_frame_hex("9060A6++"), [bytes.fromhex("9060A6")])
 
 
+class TasmotaTimingTests(unittest.TestCase):
+    def test_comma_form(self):
+        from mwm.protocol import tasmota_timings
+        # The Tasmota IR receiver IC converts 38 kHz bursts to simple
+        # mark/space durations, so RawData has NO leading frequency. Comma
+        # form alternates sign from first element (even index +).
+        out = tasmota_timings("100,200,300,400")
+        self.assertEqual(out, [100, -200, 300, -400])
+
+    def test_irsend_comma_prefix_stripped(self):
+        from mwm.protocol import tasmota_timings
+        # IRsend <freq>,<raw> -- the leading frequency is dropped, leaving
+        # the mark/space durations to alternate from index 0.
+        out = tasmota_timings("IRsend 38000,100,200,300")
+        self.assertEqual(out, [100, -200, 300])
+
+    def test_comma_first_value_leading_sign(self):
+        from mwm.protocol import tasmota_timings
+        # A leading frequency may appear in hand-edited dumps; treat it as
+        # part of the sequence (even index => positive mark).
+        out = tasmota_timings("38000,100,200")
+        self.assertEqual(out, [38000, -100, 200])
+
+    def test_compact_reference(self):
+        from mwm.protocol import tasmota_timings
+        # A short MWM-ish compact blob exercising letter table + repeats.
+        out = tasmota_timings("+9185-4490+650")
+        self.assertEqual(out, [9185, -4490, 650])
+
+    def test_compact_letters(self):
+        from mwm.protocol import tasmota_timings
+        # "A" assigned on first distinct value, then reused.
+        out = tasmota_timings("+100A-200b")
+        self.assertEqual(out, [100, 100, -200, -200])
+
+    def test_compact_undefined_letter(self):
+        from mwm.protocol import tasmota_timings
+        with self.assertRaises(ValueError):
+            tasmota_timings("+100Z")  # Z never defined
+
+    def test_real_beacon_rawdata_decodes(self):
+        from mwm.protocol import tasmota_timings
+        from mwm.timings import decode_timings
+        raw = ("+475-365+890-780+865-805+870-375+1720h+445-390+3790k+3785-380"
+               "In+845-400+470bQ-1200Jk+1295n+1290-795I-360C-370G-1220+465b"
+               "+2140bQ-1210E-1215+1715n+440-1215QkEdT-405JdC")
+        timings = tasmota_timings(raw)
+        self.assertTrue(all(isinstance(t, int) for t in timings))
+        self.assertTrue(len(timings) > 20)
+        frames = decode_timings(timings)
+        self.assertTrue(frames, "compact RawData should decode to frames")
+
+
+class SyncTests(unittest.TestCase):
+    def test_build_clock_write(self):
+        from mwm.protocol import build_clock_write, crc8_dallas
+        frame = build_clock_write(0x42)
+        # Should be 91 0C 42 <crc>
+        self.assertEqual(frame[0], 0x91)
+        self.assertEqual(frame[1], 0x0C)
+        self.assertEqual(frame[2], 0x42)
+        # CRC should be valid
+        expected_crc = crc8_dallas(frame[:3])
+        self.assertEqual(frame[3], expected_crc)
+
+    def test_build_group_color(self):
+        from mwm.protocol import build_group_color, crc8_dallas
+        frame = build_group_color(0x00, 0x18, 0x64)  # red, groups 00-18
+        # Should be a valid frame
+        ok, _ = frame_is_valid(frame)
+        self.assertTrue(ok)
+        # Content should contain group addressing opcodes
+        content = list(frame[1:-1])
+        self.assertEqual(content[0], 0x20)  # group header
+        self.assertIn(content[1], [0x89, 0x8C, 0x81])  # group picker
+
+    def test_build_group_palette(self):
+        from mwm.protocol import build_group_palette, crc8_dallas
+        frame = build_group_palette(0x4B, 0x63, 0x05)  # palette index 5
+        ok, _ = frame_is_valid(frame)
+        self.assertTrue(ok)
+
+    def test_decode_beacon_clock(self):
+        from mwm.protocol import decode_beacon_clock
+        # Build a beacon frame: 99 42 00 00 48 16 0C 42 D0 0E xx crc
+        content = [0x42, 0x00, 0x00, 0x48, 0x16, 0x0C, 0x42, 0xD0, 0x0E]
+        frame = build_frame(content)
+        tick = decode_beacon_clock(frame)
+        self.assertEqual(tick, 0x42)
+
+    def test_decode_beacon_clock_not_beacon(self):
+        from mwm.protocol import decode_beacon_clock
+        # A non-beacon frame
+        frame = build_frame([0x61])  # simple blue
+        tick = decode_beacon_clock(frame)
+        self.assertIsNone(tick)
+
+
 if __name__ == "__main__":
     unittest.main()

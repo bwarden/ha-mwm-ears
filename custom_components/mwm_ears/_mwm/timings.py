@@ -12,6 +12,17 @@ by inter-message gaps are SPLIT and every complete frame is returned, since
 wand pushes and our own repeated bursts arrive as one signal containing
 multiple copies. The TS decoder concatenates across gaps and relies on the
 strict length rule to reject the result.
+
+Sources of truth:
+    web/src/lib/protocol/mwm.ts       -- TypeScript decodeMWM(); this module
+        mirrors its tick-merging, tolerance constants, and CRC validation.
+    IRremoteESP8266 decodeMWM          -- Upstream C++ algorithm confirming
+        the 2400 bps UART encoding, tick-merging (kMAX_WIDTH=9), and
+        end-bit-swallowing recovery.
+    docs/mwm-show-protocol.md          -- Frame length rule, CRC-8/Dallas,
+        and inter-message gap structure.
+    docs/mwm-gwts-protocol.md       -- Physical-layer timing measurements
+        from the rig (TICK_US=417, DELTA_US tolerance, gap thresholds).
 """
 
 from __future__ import annotations
