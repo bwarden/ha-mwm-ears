@@ -1,8 +1,14 @@
 """Ear color tables and nearest-color matching.
 
-Simple one-bit colors (60-6F) are the saturated primaries; the mixed palette
-(0E XX) holds 30 measured shades. RGB values come from the rig-verified table
-samples/mwm-gwts-colors.tsv (oPossum's measurements for the palette).
+Simple one-bit colours (60-6F) are the saturated primaries; the mixed palette
+(0E XX) holds 30 measured shades.
+
+Sources of truth:
+    samples/mwm-gwts-colors.tsv  -- Rig-verified palette RGB values and
+        colour names.  All measurements by oPossum (DIYC forum post #259750);
+        names in this module MUST match the TSV "description" column exactly.
+    docs/mwm-show-protocol.md    -- Protocol reference documenting the
+        0x60-0x67 simple colour opcodes and the 0x0E palette command form.
 """
 
 from __future__ import annotations
@@ -22,35 +28,35 @@ SIMPLE_COLOR_CODES = {name: code for code, (name, _) in SIMPLE_COLORS.items()}
 EAR_STATE_OFF = "off"
 
 _PALETTE_RGB: list[tuple[str, tuple[int, int, int]]] = [
-    ("sky", (0xAC, 0xFE, 0xFE)),      # 00
-    ("azure", (0x1F, 0x90, 0xFE)),    # 01
-    ("cobalt", (0x1F, 0x4D, 0xFE)),   # 02
-    ("sapphire", (0x1F, 0x00, 0xFE)), # 03
-    ("navy blue", (0x00, 0x00, 0xFE)),# 04
-    ("lilac", (0xFF, 0xCB, 0xFE)),    # 05
-    ("orchid", (0xAC, 0x4D, 0xFE)),   # 06
-    ("violet", (0x61, 0x26, 0xFF)),   # 07
-    ("purple", (0x77, 0x01, 0xAB)),   # 08
-    ("pink", (0xFF, 0xAC, 0xFE)),     # 09
-    ("bubblegum", (0xFF, 0x2C, 0xFF)),# 0A
-    ("magenta", (0xFE, 0x0D, 0xFF)),  # 0B
-    ("fuchsia", (0xFF, 0x00, 0xCA)),  # 0C
-    ("rose", (0xFF, 0x00, 0x61)),     # 0D
-    ("crimson", (0xFF, 0x00, 0x11)),  # 0E
-    ("gold", (0xFF, 0xCB, 0x16)),     # 0F
-    ("orange", (0xFF, 0x56, 0x0A)),   # 10
-    ("amber", (0xFF, 0x77, 0x01)),    # 11
-    ("yellow", (0xFF, 0xFF, 0x00)),   # 12
-    ("coral", (0xFF, 0x44, 0x00)),    # 13
-    ("scarlet", (0xFF, 0x11, 0x00)),  # 14
-    ("red", (0xFF, 0x00, 0x00)),      # 15
-    ("ice", (0x00, 0xFE, 0xFF)),      # 16
-    ("mint", (0x00, 0xFE, 0x6B)),     # 17
-    ("spring green", (0x00, 0xFE, 0x2C)),  # 18
-    ("lime", (0x00, 0xFE, 0x00)),     # 19
-    ("green", (0x01, 0xFF, 0x00)),    # 1A
-    ("pale green", (0xDB, 0xFF, 0xCA)),  # 1B
-    ("white", (0xFE, 0xFE, 0xFE)),    # 1C
+    ("pale cyan-white", (0xAC, 0xFE, 0xFE)),  # 00
+    ("sky blue", (0x1F, 0x90, 0xFE)),          # 01
+    ("azure blue", (0x1F, 0x4D, 0xFE)),        # 02
+    ("blue-violet", (0x1F, 0x00, 0xFE)),       # 03
+    ("pure blue", (0x00, 0x00, 0xFE)),         # 04
+    ("pale pink", (0xFF, 0xCB, 0xFE)),         # 05
+    ("violet", (0xAC, 0x4D, 0xFE)),            # 06
+    ("indigo", (0x61, 0x26, 0xFF)),            # 07
+    ("purple", (0x77, 0x01, 0xAB)),            # 08
+    ("orchid pink", (0xFF, 0xAC, 0xFE)),       # 09
+    ("magenta", (0xFF, 0x2C, 0xFF)),           # 0A
+    ("fuchsia", (0xFE, 0x0D, 0xFF)),           # 0B
+    ("rose magenta", (0xFF, 0x00, 0xCA)),      # 0C
+    ("rose pink", (0xFF, 0x00, 0x61)),         # 0D
+    ("scarlet", (0xFF, 0x00, 0x11)),           # 0E
+    ("golden yellow", (0xFF, 0xCB, 0x16)),     # 0F
+    ("orange", (0xFF, 0x56, 0x0A)),            # 10
+    ("bright orange", (0xFF, 0x77, 0x01)),     # 11
+    ("pure yellow", (0xFF, 0xFF, 0x00)),       # 12
+    ("red-orange", (0xFF, 0x44, 0x00)),        # 13
+    ("orange-red", (0xFF, 0x11, 0x00)),        # 14
+    ("pure red", (0xFF, 0x00, 0x00)),          # 15
+    ("cyan", (0x00, 0xFE, 0xFF)),              # 16
+    ("spring green", (0x00, 0xFE, 0x6B)),      # 17
+    ("green-cyan", (0x00, 0xFE, 0x2C)),        # 18
+    ("pure green", (0x00, 0xFE, 0x00)),        # 19
+    ("lime green", (0x01, 0xFF, 0x00)),        # 1A
+    ("pale green-white", (0xDB, 0xFF, 0xCA)),  # 1B
+    ("white", (0xFE, 0xFE, 0xFE)),             # 1C
     # 1D is off/black; excluded from color matching.
 ]
 
@@ -93,14 +99,15 @@ def _snap_cost(
 def nearest_entry(
     rgb: tuple[int, int, int]
 ) -> tuple[str, int]:
-    """Snap an RGB triple to the closest representable ear color.
+    """Snap an RGB triple to the closest representable ear colour.
 
-    Returns (kind, code) where kind is "simple" or "palette". Simple colors
-    win ties because they can be set per-ear (coordinating the both-ears
-    and right-only primitives).
+    Returns (kind, code) where kind is "simple" or "palette".  Simple
+    colours win ties because their right-only primitive is a single
+    opcode (0x68-0x6F) while palette right-only needs the ``|80``
+    modifier on a two-byte ``0x0E`` command.
     """
-    # Prefer simple colors on cost ties (they are set per-ear via composed
-    # primitives); code breaks any remaining tie deterministically.
+    # Prefer simple colours on cost ties (simpler right-only primitive);
+    # code breaks any remaining tie deterministically.
     candidates: list[tuple[float, int, int]] = []
     for code, (_, ref) in SIMPLE_COLORS.items():
         candidates.append((_snap_cost(rgb, ref), 0, code))

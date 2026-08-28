@@ -135,10 +135,10 @@ class TrackerTests(unittest.TestCase):
 
     def test_short_palette_forms_read_per_side(self):
         tracker = EarStateTracker()
-        tracker.feed_frame(build_frame([0x0E, 0x80 | 0x01]))  # right azure
-        self.assertEqual(tracker.snapshot(), "left off, right azure")
-        tracker.feed_frame(build_frame([0x0E, 0x12]))         # both yellow
-        self.assertEqual(tracker.snapshot(), "both ears yellow")
+        tracker.feed_frame(build_frame([0x0E, 0x80 | 0x01]))  # right sky blue
+        self.assertEqual(tracker.snapshot(), "left off, right sky blue")
+        tracker.feed_frame(build_frame([0x0E, 0x12]))         # both pure yellow
+        self.assertEqual(tracker.snapshot(), "both ears pure yellow")
 
     def test_both_off_keepalive(self):
         tracker = EarStateTracker()
@@ -176,7 +176,7 @@ class TrackerTests(unittest.TestCase):
         tracker = EarStateTracker()
         tracker.feed_frame(frame_hex([0x19, 0x07, 0x0F, 0x16, 0x0E, 0x18, 0x04]))
         snap = tracker.snapshot()
-        self.assertIn("both ears crimson", snap)
+        self.assertIn("both ears scarlet", snap)
 
     def test_invalid_frame_leaves_state_alone(self):
         tracker = EarStateTracker()
