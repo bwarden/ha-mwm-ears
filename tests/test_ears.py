@@ -45,22 +45,16 @@ def run(coro):
 
 
 class ApplyTests(unittest.TestCase):
-    def test_initial_send_composes_twice_without_override(self):
+    def test_initial_send_composes_fused_frame(self):
         h = Harness()
         run(h.pair.apply_simple("left", 0x64))
-        # No 24 override (rig 2026-08-23: canonical frames land without
-        # it; the override blacks the ears for seconds). The composed
-        # group runs BURST_REPEATS+1 = 2 passes.
-        self.assertEqual(len(h.calls), 2 * (ears.BURST_REPEATS + 1))
-        first, second = h.calls[0], h.calls[1]
-        self.assertEqual(bytes.fromhex(first[0]), build_frame([0x64]))
-        self.assertEqual(
-            bytes.fromhex(second[0]), build_frame([0x68])
-        )  # right-only OFF keeps left red
+        # Fused frame: 91 64 68 = left red, right off in one burst.
+        # The composed group runs BURST_REPEATS+1 = 2 passes.
+        self.assertEqual(len(h.calls), 1 * (ears.BURST_REPEATS + 1))
+        fused = build_frame([0x64, ears.RIGHT_ONLY_BASE])
         for i, (_hexa, rc) in enumerate(h.calls):
             self.assertEqual(rc, 0)
-            expected = first if i % 2 == 0 else second
-            self.assertEqual(_hexa, expected[0])
+            self.assertEqual(bytes.fromhex(_hexa), fused)
 
     def test_right_only_change_sends_single_form(self):
         h = Harness()
@@ -95,10 +89,10 @@ class TurnOnRestoreTests(unittest.TestCase):
         h = Harness()
         sent = run(h.pair.turn_on_side("left"))
         self.assertEqual(sent, 0x67)
-        group = h.calls[-(2 * (ears.BURST_REPEATS + 1)):]
-        self.assertEqual(bytes.fromhex(group[0][0]), build_frame([0x67]))
-        self.assertEqual(bytes.fromhex(group[1][0]), build_frame([0x68]))
-        self.assertEqual(len(h.calls), 4)
+        group = h.calls[-(1 * (ears.BURST_REPEATS + 1)):]
+        fused = build_frame([0x67, ears.RIGHT_ONLY_BASE])  # left white, right off
+        self.assertEqual(bytes.fromhex(group[0][0]), fused)
+        self.assertEqual(len(h.calls), 2)
 
     def test_restores_last_explicit_color(self):
         h = Harness()
@@ -107,16 +101,12 @@ class TurnOnRestoreTests(unittest.TestCase):
         before = len(h.calls)
         sent = run(h.pair.turn_on_side("left"))
         self.assertEqual(sent, 0x64)
-        # composed group x2 passes, leading with the colour; no override.
+        # Fused group x2 passes: single frame with left red, right off.
         self.assertEqual(len(h.calls),
-                         before + 2 * (ears.BURST_REPEATS + 1))
-        self.assertEqual(bytes.fromhex(h.calls[before][0]),
-                         build_frame([0x64]))
-        self.assertEqual(bytes.fromhex(h.calls[before + 1][0]),
-                         build_frame([0x68]))
-        self.assertEqual(bytes.fromhex(h.calls[-2][0]),
-                         build_frame([0x64]))
-        self.assertEqual(bytes.fromhex(h.calls[-1][0]), build_frame([0x68]))
+                         before + 1 * (ears.BURST_REPEATS + 1))
+        fused = build_frame([0x64, ears.RIGHT_ONLY_BASE])
+        self.assertEqual(bytes.fromhex(h.calls[before][0]), fused)
+        self.assertEqual(bytes.fromhex(h.calls[-1][0]), fused)
 
     def test_sides_remember_independently(self):
         h = Harness()
@@ -139,33 +129,31 @@ class CompositionTests(unittest.TestCase):
             frame = build_frame([RIGHT_ONLY_BASE + simple - EAR_OFF_CODE])
             self.assertEqual(frame.hex().upper(), hexstr)
 
-    def test_mixed_pair_composes_both_then_right_only(self):
+    def test_mixed_pair_composes_fused_frame(self):
         RIGHT_ONLY_BASE, EAR_OFF_CODE = ears.RIGHT_ONLY_BASE, ears.EAR_OFF_CODE
         from ears_core import LEFT, RIGHT
         h = Harness()
         h.pair.codes = {LEFT: 0x62, RIGHT: 0x66}
         frames = h.pair._state_frames()
-        self.assertEqual(frames[0], build_frame([0x62]))
-        self.assertEqual(
-            frames[1], build_frame([RIGHT_ONLY_BASE + 0x66 - EAR_OFF_CODE])
-        )
+        self.assertEqual(len(frames), 1)
+        self.assertEqual(frames[0], build_frame([0x62, RIGHT_ONLY_BASE + 0x66 - EAR_OFF_CODE]))
 
-    def test_left_dark_right_lit_needs_all_off_then_right_only(self):
+    def test_left_dark_right_lit_uses_fused_frame(self):
         from ears_core import LEFT, RIGHT
         h = Harness()
         h.pair.codes = {LEFT: 0x60, RIGHT: 0x63}
         frames = h.pair._state_frames()
-        self.assertEqual(frames[0], build_frame([0x60]))
-        self.assertEqual(frames[1], build_frame([0x6B]))
+        self.assertEqual(len(frames), 1)
+        self.assertEqual(frames[0], build_frame([0x60, 0x6B]))
 
-    def test_group_repeats_preserve_frame_order(self):
+    def test_group_repeats_preserve_fused_frame(self):
         h = Harness()
         run(h.pair.apply_simple("left", 0x64))
         pattern = [c[0] for c in h.calls]
+        fused_hex = build_frame([0x64, ears.RIGHT_ONLY_BASE]).hex().upper()
         self.assertEqual(
             pattern,
-            [build_frame([0x64]).hex().upper(), build_frame([0x68]).hex().upper()]
-            * (ears.BURST_REPEATS + 1),
+            [fused_hex] * (ears.BURST_REPEATS + 1),
         )
 
 
@@ -223,18 +211,43 @@ class AdoptionTests(unittest.TestCase):
         self.assertEqual(h.pair.running_effect, effect_label(0x84))
         self.assertTrue(all(h.pair.desired_on.values()))
 
-    def test_beacon_does_not_mutate_pair_state(self):
-        """Beacons are idle sync — they must not set desired_on or
-        running_effect on pairs, because the hub is shared across rooms
-        and a beacon heard by one receiver would otherwise pollute every
-        room's entity state."""
+    def test_beacon_updates_pair_active_state(self):
+        """Beacons indicate the ears are active — the pair bound to the
+        hearing receiver should reflect desired_on and running_effect."""
+        from mwm.decode import effect_label
+
         h = HubHarness()
         h.hub.ingest([build_frame([0x42, 0x00, 0x00, 0x48, 0x88, 0x0C, 0x40])])
-        self.assertIsNone(h.pair.running_effect)
-        self.assertFalse(any(h.pair.desired_on.values()))
+        self.assertEqual(h.pair.running_effect, effect_label(0x88))
+        self.assertTrue(all(h.pair.desired_on.values()))
         self.assertIsNone(h.pair.suspended_by)
-        # Timestamp should be recorded for the silence watchdog.
         self.assertGreater(h.hub.last_beacon_at, 0)
+
+    def test_stale_beacon_within_window_does_not_relight_after_off(self):
+        """OFF must stick: a beacon heard right after our own command was in
+        flight when the ears processed the off, so it must not set
+        desired_on back to True (was slide-back-the-aggregate bug)."""
+        h = HubHarness()
+        run(h.pair.apply_simple_both(ears.EAR_OFF_CODE))
+        self.assertFalse(any(h.pair.desired_on.values()))
+        # A stale beacon arrives 2 s later — inside the debounce window.
+        h.now += 2.0
+        h.hub.ingest(
+            [build_frame([0x42, 0x00, 0x00, 0x48, 0x88, 0x0C, 0x40])]
+        )
+        self.assertFalse(any(h.pair.desired_on.values()))
+
+    def test_beacon_after_stale_window_relights(self):
+        """Once the debounce window passes, a live beacon correctly shows
+        the ears as on again (they genuinely kept/woke beaconing)."""
+        h = HubHarness()
+        run(h.pair.apply_simple_both(ears.EAR_OFF_CODE))
+        self.assertFalse(any(h.pair.desired_on.values()))
+        h.now += ears.BEACON_STALE_AFTER_COMMAND_S + 1.0
+        h.hub.ingest(
+            [build_frame([0x42, 0x00, 0x00, 0x48, 0x88, 0x0C, 0x40])]
+        )
+        self.assertTrue(all(h.pair.desired_on.values()))
 
 
 class CrossRoomIsolationTests(unittest.TestCase):
@@ -263,17 +276,31 @@ class CrossRoomIsolationTests(unittest.TestCase):
         self.assertIsNone(pair_b.running_effect)
         self.assertFalse(any(pair_b.desired_on.values()))
 
-    def test_beacon_does_not_mutate_any_pair(self):
+    def test_beacon_scoped_to_receiver(self):
+        """Beacon on one receiver only updates the pair bound to that
+        receiver, not pairs in other rooms."""
+        from mwm.decode import effect_label
+
         hub = ears.ObservedHub()
-        pair = ears.EarPairState(
+        pair_a = ears.EarPairState(
             lambda f, rc=0: None, repeat_gap_s=0,
         )
-        pair.receiver_entity = "infrared.receiver_a"
-        hub.pairs = [pair]
+        pair_a.receiver_entity = "infrared.receiver_a"
+        pair_b = ears.EarPairState(
+            lambda f, rc=0: None, repeat_gap_s=0,
+        )
+        pair_b.receiver_entity = "infrared.receiver_b"
+        hub.pairs = [pair_a, pair_b]
 
-        hub.ingest([build_frame([0x42, 0x00, 0x00, 0x48, 0x88, 0x0C, 0x40])])
-        self.assertIsNone(pair.running_effect)
-        self.assertFalse(any(pair.desired_on.values()))
+        hub.ingest(
+            [build_frame([0x42, 0x00, 0x00, 0x48, 0x88, 0x0C, 0x40])],
+            receiver="infrared.receiver_a",
+        )
+        # pair_a should reflect active ears; pair_b untouched.
+        self.assertEqual(pair_a.running_effect, effect_label(0x88))
+        self.assertTrue(all(pair_a.desired_on.values()))
+        self.assertIsNone(pair_b.running_effect)
+        self.assertFalse(any(pair_b.desired_on.values()))
 
     def test_receiver_none_updates_all_pairs(self):
         hub = ears.ObservedHub()

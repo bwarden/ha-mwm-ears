@@ -61,6 +61,16 @@ REPEAT_GAP_S = 1.8
 # Transmissions newer than this count as our own echo when overheard.
 OURS_WINDOW_S = 15.0
 
+# After we transmit a state-changing command, treat beacons heard within
+# this window as STALE (they were already in flight when the ears processed
+# the command) rather than as proof the ears are really on.  Without this,
+# an explicit "all off" races the ear's last pre-off beacon: the off sticks
+# on the hardware but the very next overheard beacon force-sets desired_on
+# back to True and the aggregate entity slides back on.  About one beacon
+# interval (~7-15 s) rides out the race; a genuinely re-woken ear keeps
+# beaconing and correctly shows on again after the window.
+BEACON_STALE_AFTER_COMMAND_S = 15.0
+
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -101,6 +111,9 @@ class EarPairState:
         self.suspended_by: str | None = None
         self.listeners: list = []
         self._recent_sent: list[tuple[str, float]] = []
+        # Last time we transmitted a state-changing command.  Beacons heard
+        # shortly afterwards may be stale (see BEACON_STALE_AFTER_COMMAND_S).
+        self._last_command_at: float = 0.0
 
     # -- display ---------------------------------------------------------
 
@@ -181,26 +194,25 @@ class EarPairState:
     def _state_frames(self) -> list[bytes]:
         """Verified-form frames expressing the current pair state.
 
-        The protocol's simple-colour primitives target BOTH ears (`90 6X`)
-        or the RIGHT ear alone (`90 68+X`; samples/mwm-gwts-colors.tsv).
-        There is no per-side fused phrase: multi-byte phrases run their
-        opcodes in order against both ears (rig session 2026-08-23:
-        `91 62 61` -> both blue, `91 62 60` -> both dark), so an embedded
-        off byte always wins eventually. Left-ear changes are therefore a
-        COORDINATION of the two primitives:
+        Equal pairs use the canonical both-ears form (`90 6X`).  When
+        left and right differ, a *fused* 2-byte phrase sets each ear in
+        a single IR frame (samples/mwm-gwts-colors.tsv row
+        ``left-blue-right-green-fused``; docs/mwm-gwts-protocol.md
+        section "Left vs right ears"):
 
-            1. `90 <left>`   -- bring both ears to the left colour,
-            2. `90 <right-only(right)>` -- restore the right ear alone.
+            ``91 <left> <right-only(right)>``
 
-        Equal pairs need only step 1 (including canonical `90 60` off).
+        The first byte (`60`-`67`) brings both ears to the left colour;
+        the second byte (`68`-`6F`) overrides only the right ear.
+        Multi-byte phrases run opcodes sequentially against both ears, so
+        a both-ear opcode followed by a right-only opcode achieves
+        per-side control in one burst.  Equal pairs need only the single
+        both-ears form (including canonical ``90 60`` off).
         """
         left, right = self.codes[LEFT], self.codes[RIGHT]
         if left == right:
             return [build_frame([left])]
-        return [
-            build_frame([left]),
-            build_frame([RIGHT_ONLY_BASE + (right - EAR_OFF_CODE)]),
-        ]
+        return [build_frame([left, RIGHT_ONLY_BASE + (right - EAR_OFF_CODE)])]
 
     async def _send_group(
         self, frames: list[bytes], repeat_count: int
@@ -220,6 +232,7 @@ class EarPairState:
                 try:
                     await self._transmit(frame, 0)
                     self._mark_sent(frame)
+                    self._last_command_at = self._clock()
                     self._notify()
                 except Exception:  # noqa: BLE001 - keep the group going
                     _LOGGER.exception("transmit failed (pass %d)", attempt)
@@ -231,6 +244,7 @@ class EarPairState:
     async def _send(self, frame: bytes, repeat_count: int) -> None:
         await self._transmit(frame, repeat_count)
         self._mark_sent(frame)
+        self._last_command_at = self._clock()
         self._notify()
 
     async def apply_simple(self, side: str, code: int) -> None:
@@ -564,11 +578,33 @@ class ObservedHub:
             self.tracker.feed_frame(frame)
             self.last_summary = f"[{desc['kind']}] {desc['summary']}"
             if desc["kind"] == "beacon":
-                # Idle sync: record timestamp for the silence watchdog.
-                # Do NOT mutate pair state here — the hub is shared across
-                # all rooms, so a beacon heard by one receiver would
-                # incorrectly mark every room's ears as active.
                 self.last_beacon_at = self._clock()
+                # Propagate the beacon's active-ear state to pairs bound
+                # to this receiver.  target_pairs is already scoped by the
+                # receiver entity, so only the correct room's pairs are
+                # touched — cross-room pollution is not possible.
+                demo_effect = desc.get("demo_effect")
+                for pair in target_pairs:
+                    # The effect/alive observations always update; they are
+                    # what the sensor/snapshot report.  But we must NOT
+                    # re-assert desired_on=True from a beacon heard right
+                    # after our own command: that beacon was likely already
+                    # in flight when the ears processed e.g. an "all off",
+                    # so it would slide the entity straight back on.  Only
+                    # beacons arriving AFTER the stale window (i.e. the
+                    # ears genuinely kept/woke beaconing) flip desired_on.
+                    now = self._clock()
+                    stale = (
+                        now - pair._last_command_at
+                        <= BEACON_STALE_AFTER_COMMAND_S
+                    )
+                    if not stale:
+                        pair.desired_on = {LEFT: True, RIGHT: True}
+                    pair.running_effect = (
+                        effect_label(demo_effect) if demo_effect is not None
+                        else None
+                    )
+                    pair.palette_code = {LEFT: None, RIGHT: None}
         for frame in command_frames:
             desc = describe_frame(frame)
             if desc["kind"] == "beacon":
