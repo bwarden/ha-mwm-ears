@@ -49,6 +49,8 @@ from .const import (
     REPEAT_GAP_S,
 )
 from .ears import (
+    ENFORCE_ASSUME_OFF_S,
+    ENFORCE_INTERVAL_S,
     EarPairState,
     ObservedHub,
     ReceiverData,
@@ -57,7 +59,7 @@ from .ears import (
 
 _LOGGER = logging.getLogger(__name__)
 
-PLATFORMS = ["light", "sensor"]
+PLATFORMS = ["light", "sensor", "switch"]
 
 
 def _get_hub(hass: HomeAssistant) -> ObservedHub:
@@ -304,6 +306,26 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         entry.async_on_unload(
             async_track_time_interval(
                 hass, _beacon_watchdog, timedelta(seconds=30),
+            )
+        )
+
+    # Enforcement heartbeat: shared across all entries (runs once).  Each
+    # tick applies the enforcement assume-off rule, then re-asserts the
+    # held state for every pair that is enforcing and still on.  Non-
+    # enforcing pairs are no-ops (see EarPairState.enforce_tick).
+    _ENFORCE_KEY = f"{DOMAIN}_enforce_ticker"
+    if _ENFORCE_KEY not in hass.data[DOMAIN]:
+
+        async def _enforce_ticker(_now) -> None:
+            for pair in hub.pairs:
+                if pair.assume_off_if_silent():
+                    hub._notify()
+                await pair.enforce_tick()
+
+        hass.data[DOMAIN][_ENFORCE_KEY] = True
+        entry.async_on_unload(
+            async_track_time_interval(
+                hass, _enforce_ticker, timedelta(seconds=ENFORCE_INTERVAL_S),
             )
         )
 

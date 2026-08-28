@@ -65,13 +65,19 @@ box, which the form suggests together; either half is optional:
     per-ear effect invocation. Effect picks invoke verified `48 XX`
     programs. Bare toggles re-issue the remembered colour, defaulting
     to white.
-  - Lights follow the room: an overheard FOREIGN command (wand or other
-    transmitter) is adopted into the displayed state and pauses our
-    repeats until your next action; idle beacons keep the effect label
-    current without touching anything.
-  - While both ears are on, the current phrase is re-issued every ~8 s so
-    newly-powered ears join in. **Off is never repeated** beyond its
-    initial multi-burst; effect invocations likewise fire once.
+  - By default the lights follow the room (passive): an overheard FOREIGN
+    command (wand or other transmitter) is adopted into the displayed
+    state and pauses our repeats until your next action; idle beacons keep
+    the effect label current without touching anything. **Off is never
+    repeated** beyond its initial multi-burst; effect invocations likewise
+    fire once.
+  - The *Enforce Ears* switch (one per room) flips this to sole control:
+    when ON, the integration re-asserts the light-entity state every ~10 s
+    so ears that drift to demo/standalone mode are pulled back onto your
+    colour, and foreign commands are overridden rather than adopted. If no
+    beacon is heard for ~45 s while enforcing, we assume the ears powered
+    off and the lights reflect off until you turn one on again. Defaults
+    to OFF (passive).
 - **Infrared receiver** -> captured timing signals are decoded locally
   (end-bit-swallowed bytes recovered by CRC brute-force) into diagnostic
   sensors:
@@ -120,7 +126,7 @@ cd python && PYTHONPATH=. python3 -m unittest discover -s tests -v
 | `_mwm/` | protocol library (framing, timings codec, decoder, palette) |
 | `ears.py` | pure state logic: pair desired-state, refresh/suspend rules, observed-traffic hub |
 | `tests/` | unittest suite for both |
-| remaining modules | HA glue: config flow, light/sensor platforms |
+| remaining modules | HA glue: config flow, light/sensor/switch platforms |
 
 `tests/_bootstrap.py` loads `_mwm` standalone by path, and `ears.py`
 falls back to the same alias when loaded outside a package, keeping
