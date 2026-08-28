@@ -70,11 +70,15 @@ async def async_setup_entry(
         ]
     )
 
-    # Aggregate light: created once when 2+ emitter entries exist.
-    _AGG_KEY = f"{DOMAIN}_aggregate_light"
+    # Aggregate lights: created once when 2+ emitter entries exist.
+    _AGG_KEY = f"{DOMAIN}_aggregate_lights"
     if _AGG_KEY not in hass.data[DOMAIN] and len(hub.pairs) >= 2:
         hass.data[DOMAIN][_AGG_KEY] = True
-        async_add_entities([MwmAggregateLight(hub)])
+        async_add_entities([
+            MwmAggregateBothLight(hub),
+            MwmAggregateLeftLight(hub),
+            MwmAggregateRightLight(hub),
+        ])
 
 
 class MwmEarLight(LightEntity):
@@ -214,29 +218,26 @@ class MwmEarLight(LightEntity):
             await self._store.turn_off_side(self._side)
 
 
-class MwmAggregateLight(LightEntity):
-    """Top-level light controlling all MWM ear pairs across rooms.
+def _aggregate_device_info() -> DeviceInfo:
+    return DeviceInfo(
+        identifiers={(DOMAIN, AGGREGATE_DEVICE_ID)},
+        name="MWM Ears",
+        manufacturer="Disney (Made With Magic)",
+        model="MWM/GWTS aggregate controller",
+        sw_version=INTEGRATION_VERSION,
+    )
 
-    is_on is True when ANY sub-light is on.  hs_color and effect
-    reflect the most recently active room.
-    """
+
+class _MwmAggregateBase(LightEntity):
+    """Shared base for the three aggregate light entities."""
 
     _attr_should_poll = False
     _attr_supported_color_modes = {ColorMode.HS}
     _attr_color_mode = ColorMode.HS
-    _attr_supported_features = LightEntityFeature.EFFECT
-    _attr_name = "MWM All Rooms"
-    _attr_unique_id = f"{DOMAIN}_aggregate_light"
 
     def __init__(self, hub: ObservedHub) -> None:
         self._hub = hub
-        self._attr_device_info = DeviceInfo(
-            identifiers={(DOMAIN, AGGREGATE_DEVICE_ID)},
-            name="MWM Ears",
-            manufacturer="Disney (Made With Magic)",
-            model="MWM/GWTS aggregate controller",
-            sw_version=INTEGRATION_VERSION,
-        )
+        self._attr_device_info = _aggregate_device_info()
 
     async def async_added_to_hass(self) -> None:
         self._hub.listeners.append(self.async_write_ha_state)
@@ -246,40 +247,6 @@ class MwmAggregateLight(LightEntity):
             self._hub.listeners.remove(self.async_write_ha_state)
         except ValueError:
             pass
-
-    def _active_pairs(self) -> list[EarPairState]:
-        """Pairs whose ears are on (at least one side)."""
-        return [p for p in self._hub.pairs if any(p.desired_on.values())]
-
-    def _most_recent_pair(self) -> EarPairState | None:
-        """The most recently active pair, or None if none active."""
-        active = self._active_pairs()
-        if not active:
-            return None
-        return max(active, key=lambda p: p._last_active_at)
-
-    @property
-    def is_on(self) -> bool:
-        return bool(self._active_pairs())
-
-    @property
-    def hs_color(self) -> tuple[float, float] | None:
-        pair = self._most_recent_pair()
-        if pair is None:
-            return None
-        # Use BOTH side for aggregate color
-        return pair.side_hs_color(BOTH)
-
-    @property
-    def effect(self) -> str | None:
-        pair = self._most_recent_pair()
-        if pair is None:
-            return None
-        return pair.running_effect
-
-    @property
-    def effect_list(self) -> list[str] | None:
-        return list(LIGHT_EFFECTS)
 
     @property
     def extra_state_attributes(self) -> dict:
@@ -293,12 +260,46 @@ class MwmAggregateLight(LightEntity):
                 "running_effect": pair.running_effect,
                 "suspended_by": pair.suspended_by,
             }
-        return {
-            "rooms": rooms,
-            "active_rooms": [
-                p.room_name for p in self._active_pairs()
-            ],
-        }
+        return {"rooms": rooms}
+
+
+class MwmAggregateBothLight(_MwmAggregateBase):
+    """Master aggregate light — on when ANY ear in ANY room is on.
+
+    hs_color and effect reflect the most recently active room.
+    Drives effects (room-wide) and turns all ears off together.
+    """
+
+    _attr_supported_features = LightEntityFeature.EFFECT
+    _attr_name = "MWM All Rooms"
+    _attr_unique_id = f"{DOMAIN}_aggregate_light_both"
+
+    def _active_pairs(self) -> list[EarPairState]:
+        return [p for p in self._hub.pairs if any(p.desired_on.values())]
+
+    def _most_recent_pair(self) -> EarPairState | None:
+        active = self._active_pairs()
+        if not active:
+            return None
+        return max(active, key=lambda p: p._last_active_at)
+
+    @property
+    def is_on(self) -> bool:
+        return bool(self._active_pairs())
+
+    @property
+    def hs_color(self) -> tuple[float, float] | None:
+        pair = self._most_recent_pair()
+        return pair.side_hs_color(BOTH) if pair else None
+
+    @property
+    def effect(self) -> str | None:
+        pair = self._most_recent_pair()
+        return pair.running_effect if pair else None
+
+    @property
+    def effect_list(self) -> list[str] | None:
+        return list(LIGHT_EFFECTS)
 
     async def async_turn_on(self, **kwargs) -> None:
         effect = kwargs.get(ATTR_EFFECT)
@@ -325,3 +326,101 @@ class MwmAggregateLight(LightEntity):
     async def async_turn_off(self, **kwargs) -> None:
         for pair in self._hub.pairs:
             await pair.apply_simple_both(EAR_OFF_CODE)
+
+
+class MwmAggregateLeftLight(_MwmAggregateBase):
+    """Aggregate left-ear light — on when ANY room's left ear is on."""
+
+    _attr_name = "MWM All Rooms Left Ear"
+    _attr_unique_id = f"{DOMAIN}_aggregate_light_left"
+
+    def _active_pairs(self) -> list[EarPairState]:
+        return [p for p in self._hub.pairs if p.desired_on[LEFT]]
+
+    def _most_recent_pair(self) -> EarPairState | None:
+        active = self._active_pairs()
+        if not active:
+            return None
+        return max(active, key=lambda p: p._last_active_at)
+
+    @property
+    def is_on(self) -> bool:
+        return bool(self._active_pairs())
+
+    @property
+    def hs_color(self) -> tuple[float, float] | None:
+        pair = self._most_recent_pair()
+        return pair.side_hs_color(LEFT) if pair else None
+
+    @property
+    def effect(self) -> str | None:
+        pair = self._most_recent_pair()
+        return pair.running_effect if pair else None
+
+    async def async_turn_on(self, **kwargs) -> None:
+        hs_color = kwargs.get(ATTR_HS_COLOR)
+
+        if hs_color is not None:
+            kind, code = nearest_entry(color_hs_to_RGB(*hs_color))
+            for pair in self._hub.pairs:
+                if kind == "simple":
+                    await pair.apply_simple(LEFT, code)
+                else:
+                    await pair.apply_palette(code, side=LEFT)
+            return
+
+        for pair in self._hub.pairs:
+            await pair.turn_on_side(LEFT)
+
+    async def async_turn_off(self, **kwargs) -> None:
+        for pair in self._hub.pairs:
+            await pair.turn_off_side(LEFT)
+
+
+class MwmAggregateRightLight(_MwmAggregateBase):
+    """Aggregate right-ear light — on when ANY room's right ear is on."""
+
+    _attr_name = "MWM All Rooms Right Ear"
+    _attr_unique_id = f"{DOMAIN}_aggregate_light_right"
+
+    def _active_pairs(self) -> list[EarPairState]:
+        return [p for p in self._hub.pairs if p.desired_on[RIGHT]]
+
+    def _most_recent_pair(self) -> EarPairState | None:
+        active = self._active_pairs()
+        if not active:
+            return None
+        return max(active, key=lambda p: p._last_active_at)
+
+    @property
+    def is_on(self) -> bool:
+        return bool(self._active_pairs())
+
+    @property
+    def hs_color(self) -> tuple[float, float] | None:
+        pair = self._most_recent_pair()
+        return pair.side_hs_color(RIGHT) if pair else None
+
+    @property
+    def effect(self) -> str | None:
+        pair = self._most_recent_pair()
+        return pair.running_effect if pair else None
+
+    async def async_turn_on(self, **kwargs) -> None:
+        hs_color = kwargs.get(ATTR_HS_COLOR)
+
+        if hs_color is not None:
+            kind, code = nearest_entry(color_hs_to_RGB(*hs_color))
+            for pair in self._hub.pairs:
+                if kind == "simple":
+                    await pair.apply_simple(RIGHT, code)
+                else:
+                    await pair.apply_palette(code, side=RIGHT)
+            return
+
+        for pair in self._hub.pairs:
+            await pair.turn_on_side(RIGHT)
+
+    async def async_turn_off(self, **kwargs) -> None:
+        for pair in self._hub.pairs:
+            await pair.turn_off_side(RIGHT)
