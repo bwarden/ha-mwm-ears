@@ -369,8 +369,8 @@ class PaletteSideTests(unittest.TestCase):
     def test_side_names_read_per_side(self):
         h = Harness()
         run(h.pair.apply_palette(0x00, side="right"))
-        self.assertEqual(h.pair.side_color_name("right"), "sky")
-        self.assertNotEqual(h.pair.side_color_name("left"), "sky")
+        self.assertEqual(h.pair.side_color_name("right"), "pale cyan-white")
+        self.assertNotEqual(h.pair.side_color_name("left"), "pale cyan-white")
 
 
 class OffSemanticsTests(unittest.TestCase):
