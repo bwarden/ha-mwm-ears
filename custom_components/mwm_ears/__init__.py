@@ -309,8 +309,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
 
-    # Apply "mwm" label to all mwm_ears entities once all entries have
-    # loaded.  Use a one-shot timer to defer past concurrent entry setup.
+    # Apply "mwm" label to all mwm_ears entities.
+    # Use a one-shot timer to defer past concurrent entry setup.
     _LABEL_DONE = f"{DOMAIN}_labels_applied"
     if _LABEL_DONE not in hass.data[DOMAIN]:
         hass.data[DOMAIN][_LABEL_DONE] = True
