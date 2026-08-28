@@ -2,8 +2,21 @@
 
 Implements the instruction-set tables from docs/mwm-show-protocol.md section
 4 plus the observed phrase templates (section 5): idle/demo beacons, static
-color commands, effect invocations, timers/modifiers, group addressing, FEC
+colour commands, effect invocations, timers/modifiers, group addressing, FEC
 countdowns, and 55 AA system messages.
+
+Sources of truth:
+    docs/mwm-show-protocol.md section 4  -- Effects table (labels, indices)
+        verified by Thread and Park experiments.
+    docs/mwm-show-protocol.md section 5  -- Wand/paintbrush phrase templates
+        (96 19 gg kk vv tt ww cc) with known (gg, kk) pairs and static
+        colour template layout.
+    samples/mwm-gwts-colors.tsv          -- Verified frame examples
+        confirming beacon structure and palette command forms.
+    DIYC forum post #259750 (oPossum)     -- Original frame measurements,
+        palette RGB values, and wand-command decoding.
+    DIYC thread (jonfether, RobG, et al.) -- Simple colour opcodes, beacon
+        variants (park/live), companion block parsing.
 """
 
 from __future__ import annotations
@@ -256,13 +269,18 @@ def describe_content(content: list[int] | bytes) -> dict:
     if len(body) >= 2 and body[0] == 0x96 and body[1] == 0x19:
         return _describe_wand(body)
     if _is_beacon(body):
+        clock_tick = body[6] if len(body) > 6 else None
+        summary = (
+            "idle beacon (demo effect running: "
+            f"{effect_label(body[4])})"
+        )
+        if clock_tick is not None:
+            summary += f" [clock={clock_tick:02X}]"
         return {
             "kind": "beacon",
-            "summary": (
-                "idle beacon (demo effect running: "
-                f"{effect_label(body[4])})"
-            ),
+            "summary": summary,
             "demo_effect": body[4],
+            "clock_tick": clock_tick,
             "tokens": [],
             "effect": None,
         }
@@ -393,6 +411,7 @@ class EarStateTracker:
         self._left: str = EAR_STATE_OFF
         self._right: str = EAR_STATE_OFF
         self._effect: str | None = None
+        self._clock_tick: int | None = None
         self.last_summary: str = ""
 
     @property
@@ -407,6 +426,11 @@ class EarStateTracker:
     def effect(self) -> str | None:
         return self._effect
 
+    @property
+    def clock_tick(self) -> int | None:
+        """Most recent clock tick from a beacon, or None."""
+        return self._clock_tick
+
     def feed_frame(self, frame: str | bytes) -> dict:
         desc = describe_frame(frame)
         self.last_summary = desc["summary"]
@@ -414,6 +438,8 @@ class EarStateTracker:
             return desc
         if desc["kind"] == "beacon":
             self._effect = effect_label(desc["demo_effect"])
+            if "clock_tick" in desc:
+                self._clock_tick = desc["clock_tick"]
             return desc
 
         if desc["kind"] == "55aa":
@@ -501,11 +527,18 @@ class EarStateTracker:
     def snapshot(self) -> str:
         """One-line best-effort description of current ear state."""
         parts = []
-        if self._left == self._right:
+        both_off = (
+            self._left == EAR_STATE_OFF and self._right == EAR_STATE_OFF
+        )
+        if both_off and self._effect:
+            # Beacons indicate the ears are actively running a demo effect;
+            # the color slots are uninformative in this mode.
+            parts.append(f"both ears active: {self._effect}")
+        elif self._left == self._right:
             parts.append(f"both ears {self._left}")
         else:
             parts.append(f"left {self._left}")
             parts.append(f"right {self._right}")
-        if self._effect:
+        if self._effect and not both_off:
             parts.append(f"running: {self._effect}")
         return ", ".join(parts)
