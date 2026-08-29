@@ -49,7 +49,6 @@ from .const import (
     REPEAT_GAP_S,
 )
 from .ears import (
-    ENFORCE_ASSUME_OFF_S,
     ENFORCE_INTERVAL_S,
     EarPairState,
     ObservedHub,
@@ -70,7 +69,10 @@ def _get_hub(hass: HomeAssistant) -> ObservedHub:
 
 
 def _make_signal_handler(
-    receiver: ReceiverData, hub: ObservedHub, receiver_entity: str | None = None,
+    hass: HomeAssistant,
+    receiver: ReceiverData,
+    hub: ObservedHub,
+    receiver_entity: str | None = None,
 ):
     """Decode received raw timings into frames for sensors + hub."""
 
@@ -89,7 +91,11 @@ def _make_signal_handler(
         if not frames_out:
             return  # census kept the evidence; nothing MWM-shaped here
         receiver.ingest(frames_out)
-        hub.ingest(frames_out, receiver=receiver_entity)
+        # Enforcing pairs that heard a foreign (non-echo) signal are pulled
+        # back onto their held state immediately (enforce_reassert is a
+        # no-op for non-enforcing pairs, so scheduling it is always safe).
+        for pair in hub.ingest(frames_out, receiver=receiver_entity):
+            hass.async_create_task(pair.enforce_reassert())
 
     return handler
 
@@ -195,7 +201,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         def _subscribe() -> None:
             sub_state["unsub"] = infrared.async_subscribe_receiver(
                 hass, receiver_entity,
-                _make_signal_handler(receiver_data, hub, receiver_entity),
+                _make_signal_handler(hass, receiver_data, hub, receiver_entity),
             )
 
         def _teardown_sub() -> None:
@@ -310,16 +316,13 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         )
 
     # Enforcement heartbeat: shared across all entries (runs once).  Each
-    # tick applies the enforcement assume-off rule, then re-asserts the
-    # held state for every pair that is enforcing and still on.  Non-
-    # enforcing pairs are no-ops (see EarPairState.enforce_tick).
+    # tick re-asserts the held state for every pair with enforcement ON.
+    # Non-enforcing pairs are no-ops (see EarPairState.enforce_tick).
     _ENFORCE_KEY = f"{DOMAIN}_enforce_ticker"
     if _ENFORCE_KEY not in hass.data[DOMAIN]:
 
         async def _enforce_ticker(_now) -> None:
             for pair in hub.pairs:
-                if pair.assume_off_if_silent():
-                    hub._notify()
                 await pair.enforce_tick()
 
         hass.data[DOMAIN][_ENFORCE_KEY] = True

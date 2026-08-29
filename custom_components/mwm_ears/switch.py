@@ -17,12 +17,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.device_registry import DeviceInfo
 
 from .const import CONF_EMITTER_ENTITY, INTEGRATION_VERSION, DOMAIN, HUB_KEY
-from .ears import (
-    ENFORCE_ASSUME_OFF_S,
-    ENFORCE_INTERVAL_S,
-    EarPairState,
-    ObservedHub,
-)
+from .ears import ENFORCE_INTERVAL_S, EarPairState, ObservedHub
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -81,7 +76,7 @@ class MwmEnforceSwitch(SwitchEntity):
         self.async_write_ha_state()
         # Re-assert immediately so enforcement takes effect now, not on the
         # next periodic timer tick.
-        await self._pair.enforce_tick()
+        await self._pair.enforce_reassert()
 
     async def async_turn_off(self, **kwargs) -> None:
         self._pair.set_enforce(False)
@@ -91,6 +86,5 @@ class MwmEnforceSwitch(SwitchEntity):
     def extra_state_attributes(self) -> dict:
         return {
             "reassert_every_s": ENFORCE_INTERVAL_S,
-            "assume_off_after_s": ENFORCE_ASSUME_OFF_S,
             "room_state": self._hub.snapshot(),
         }

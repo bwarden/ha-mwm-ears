@@ -252,7 +252,7 @@ class AdoptionTests(unittest.TestCase):
 
 
 class EnforcementTests(unittest.TestCase):
-    """Enforce-ears switch mode: periodic re-assert + silence assume-off."""
+    """Enforce-ears switch mode: always re-assert; assume-off is passive."""
 
     def test_enforce_tick_reasserts_held_state_single_pass(self):
         h = HubHarness()
@@ -271,33 +271,84 @@ class EnforcementTests(unittest.TestCase):
         run(h.pair.enforce_tick())
         self.assertEqual(h.calls, [])
 
-    def test_enforce_tick_sends_nothing_when_ears_off(self):
+    def test_enforce_tick_reasserts_off_when_enforcing_off(self):
+        # Enforcing an OFF target still re-asserts (keeps ears dark against
+        # demo mode) -- it does NOT go quiet.
         h = HubHarness()
         run(h.pair.apply_simple_both(ears.EAR_OFF_CODE))
         h.pair.set_enforce(True)
         h.calls.clear()
         run(h.pair.enforce_tick())
-        self.assertEqual(h.calls, [])
+        self.assertEqual(h.calls, [(build_frame([0x60]).hex().upper(), 0)])
 
-    def test_assume_off_only_while_enforcing_and_silent(self):
+    def test_enforce_tick_backs_off_when_off_target(self):
+        # OFF target: re-asserts, then backs off to ENFORCE_OFF_INTERVAL_S.
         h = HubHarness()
-        # Passive pair: never assumes off on a short gap.
-        run(h.pair.apply_simple_both(0x64))
-        self.assertFalse(h.pair.assume_off_if_silent())
-        # Enforcing pair with no beacon heard yet: don't clamp.
+        run(h.pair.apply_simple_both(ears.EAR_OFF_CODE))
         h.pair.set_enforce(True)
-        self.assertFalse(h.pair.assume_off_if_silent())
-        # Hear a beacon (liveness), then go quiet past the assume-off gap.
+        h.calls.clear()
+        run(h.pair.enforce_tick())  # first tick always sends
+        self.assertEqual(len(h.calls), 1)
+        # A second tick well inside the back-off window sends nothing.
+        h.now += 20.0
+        run(h.pair.enforce_tick())
+        self.assertEqual(len(h.calls), 1)
+        # Past the back-off window it re-asserts again.
+        h.now += ears.ENFORCE_OFF_INTERVAL_S
+        run(h.pair.enforce_tick())
+        self.assertEqual(len(h.calls), 2)
+
+    def test_enforce_reassert_ignores_backoff_and_restarts_it(self):
+        h = HubHarness()
+        run(h.pair.apply_simple_both(ears.EAR_OFF_CODE))
+        h.pair.set_enforce(True)
+        h.calls.clear()
+        run(h.pair.enforce_reassert())  # immediate, always sends
+        self.assertEqual(len(h.calls), 1)
+        # It restarted the timer: a tick just inside the window sends nothing.
+        h.now += 30.0
+        run(h.pair.enforce_tick())
+        self.assertEqual(len(h.calls), 1)
+
+    def test_enforce_on_target_reasserts_on_every_tick(self):
+        # ON target: re-asserts on every fast tick, no back-off.
+        h = HubHarness()
+        run(h.pair.apply_simple_both(0x64))
+        h.pair.set_enforce(True)
+        h.calls.clear()
+        run(h.pair.enforce_tick())
+        h.now += ears.ENFORCE_INTERVAL_S
+        run(h.pair.enforce_tick())
+        self.assertEqual(len(h.calls), 2)
+
+    def test_assume_off_passive_when_silent(self):
+        # Passive + light ON + beacon silence past the timeout -> assume off.
+        h = HubHarness()
+        run(h.pair.apply_simple_both(0x64))
         h.now += 1.0
         h.hub.ingest([build_frame([0x42, 0x00, 0x00, 0x48, 0x88, 0x0C, 0x40])])
-        h.now += ears.ENFORCE_ASSUME_OFF_S + 1.0
-        self.assertTrue(h.pair.assume_off_if_silent())
+        self.assertFalse(h.pair.assume_off_if_silent(45.0))
+        h.now += 45.0 + 1.0
+        self.assertTrue(h.pair.assume_off_if_silent(45.0))
         self.assertFalse(any(h.pair.desired_on.values()))
         self.assertIsNone(h.pair.running_effect)
-        # Enforcing again with fresh beacon < gap: stays on.
+
+    def test_assume_off_never_while_enforcing(self):
+        # Enforcing never assumes off -- even after beacon silence.
+        h = HubHarness()
+        run(h.pair.apply_simple_both(0x64))
+        h.pair.set_enforce(True)
+        h.now += 1.0
         h.hub.ingest([build_frame([0x42, 0x00, 0x00, 0x48, 0x88, 0x0C, 0x40])])
+        h.now += 45.0 + 10.0
+        self.assertFalse(h.pair.assume_off_if_silent(45.0))
         self.assertTrue(all(h.pair.desired_on.values()))
-        self.assertFalse(h.pair.assume_off_if_silent())
+
+    def test_assume_off_noop_when_light_off(self):
+        # Passive + light already OFF: the rule is only about ON states.
+        h = HubHarness()
+        run(h.pair.apply_simple_both(ears.EAR_OFF_CODE))
+        self.assertFalse(h.pair.assume_off_if_silent(45.0))
 
     def test_foreign_command_overridden_while_enforcing(self):
         h = HubHarness()
@@ -305,17 +356,38 @@ class EnforcementTests(unittest.TestCase):
         h.pair.set_enforce(True)
         # A foreign blue command arrives while we enforce.
         h.now += 1.0
-        h.hub.ingest([build_frame([0x61])])
+        reassert = h.hub.ingest([build_frame([0x61])])
         self.assertEqual(h.pair.codes, {ears.LEFT: 0x64, ears.RIGHT: 0x64})
         self.assertIsNone(h.pair.suspended_by)
         self.assertTrue(all(h.pair.desired_on.values()))
-        # Non-enforcing pair adopts the same foreign command.
+        # The enforcing pair is requested for an immediate re-assert.
+        self.assertIn(h.pair, reassert)
+        # Non-enforcing pair adopts the same foreign command, no re-assert.
         h2 = HubHarness()
         run(h2.pair.apply_simple_both(0x64))
         h2.now += 1.0
-        h2.hub.ingest([build_frame([0x61])])
+        reassert2 = h2.hub.ingest([build_frame([0x61])])
         self.assertEqual(h2.pair.codes, {ears.LEFT: 0x61, ears.RIGHT: 0x61})
         self.assertIsNotNone(h2.pair.suspended_by)
+        self.assertNotIn(h2.pair, reassert2)
+
+    def test_beacon_triggers_immediate_reassert(self):
+        h = HubHarness()
+        run(h.pair.apply_simple_both(0x64))  # red held
+        h.pair.set_enforce(True)
+        # We never transmit beacons, so any beacon heard is foreign ->
+        # while enforcing we pull back onto our held state immediately.
+        beacon = build_frame([0x42, 0x00, 0x00, 0x48, 0x88, 0x0C, 0x40])
+        self.assertIn(h.pair, h.hub.ingest([beacon]))
+
+    def test_own_echo_does_not_trigger_reassert(self):
+        h = HubHarness()
+        run(h.pair.apply_simple_both(0x64))  # red held, frame remembered
+        h.pair.set_enforce(True)
+        # Our own transmitted frame bouncing back is "ours" (matches_recent)
+        # -> not foreign, so no immediate re-assert (no self-sustaining loop).
+        echo = build_frame([0x64])
+        self.assertNotIn(h.pair, h.hub.ingest([echo]))
 
 
 class CrossRoomIsolationTests(unittest.TestCase):

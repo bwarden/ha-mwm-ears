@@ -21,7 +21,13 @@ HUB_KEY = "observed_hub"
 # and ir-mwm-send proved 2x @ ~1.8 s against these very ears.
 REPEAT_GAP_S = 1.8
 
-# Seconds of beacon silence after which ears are considered idle.
-# MWM peripherals beacon every ~8 s when active and go quiet after
-# ~120 s idle, so 130 s gives headroom for reception gaps.
-BEACON_TIMEOUT_S = 130
+# Passive assume-off: seconds of beacon silence after which a light that is
+# ON is taken to mean the ears powered off (so the light entities reflect
+# off).  Only applies while NOT enforcing; enforcing pairs re-assert their
+# state instead and never assume off.  IMPORTANT: ears are SILENT for ~2 min
+# after successfully receiving a command, then enter demo mode and begin
+# beaconing again (~every 8 s).  A light that is genuinely on therefore goes
+# quiet for up to ~120 s before beacons resume, so the assume-off window must
+# exceed that or it would wrongly turn the light off mid-quiet-window.  180 s
+# = ~3 min quiet is a real power-off / out-of-range signal.
+BEACON_TIMEOUT_S = 180

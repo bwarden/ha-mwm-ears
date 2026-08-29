@@ -72,16 +72,22 @@ OURS_WINDOW_S = 15.0
 BEACON_STALE_AFTER_COMMAND_S = 15.0
 
 # Enforcement mode: when the per-room "Enforce Ears" switch is ON we take
-# sole control of the ears -- re-asserting the light-entity state every
-# ENFORCE_INTERVAL_S and NOT adopting foreign commands (a wand or other
-# transmitter is overridden by the next re-assert).  If no beacon is heard
-# for ENFORCE_ASSUME_OFF_S while enforcing, we assume the ears powered off
-# and reflect that (light entities go off); a later beacon proves they are
-# alive again and enforcement resumes the held colour.  The passive mode
-# (switch OFF) keeps the existing reflect-what-we-hear behaviour and the
-# long BEACON_TIMEOUT_S idle rule.
+# sole control of the ears -- re-asserting the light-entity state and NOT
+# adopting foreign commands (overridden by the re-assert).  Our own
+# transmitted echoes are ignored (matches_recent).  The passive mode
+# (switch OFF) keeps the existing reflect-what-we-hear behaviour, and the
+# silence rule -- if no beacon is heard for BEACON_TIMEOUT_S while a light
+# is on, assume the ears powered off -- applies only there; enforcement
+# never assumes off.
 ENFORCE_INTERVAL_S = 10
-ENFORCE_ASSUME_OFF_S = 45
+# Re-assert cadence when the enforced state is OFF.  Ears are silent ~2 min
+# after a command, then fall back into demo/beaconing mode and show colour;
+# re-asserting OFF every ~90 s (well inside that window) keeps them dark by
+# perpetually resetting the demo-entry timer.  An enforced ON state is
+# re-asserted on the fast ENFORCE_INTERVAL_S tick instead (to hold colour
+# against drift).  Any foreign (non-echo) phrase triggers an IMMEDIATE
+# re-assert that restarts the back-off (see enforce_reassert).
+ENFORCE_OFF_INTERVAL_S = 90
 
 
 _LOGGER = logging.getLogger(__name__)
@@ -93,10 +99,12 @@ class EarPairState:
     """Desired state of one transmitter's ear pair.
 
     User-initiated sends use repeat_count=BURST_REPEATS extra spaced
-    transmissions.  When a foreign MWM command is overheard (wand,
-    another transmitter), repetition suspends until the next explicit
-    user action.  State is kept honest by detecting received IR frames
-    rather than re-blasting commands periodically.
+    transmissions.  In passive mode (the default) state is kept honest by
+    detecting received IR frames rather than re-blasting periodically: a
+    foreign MWM command overheard (wand, another transmitter) suspends
+    repetition until the next explicit user action.  In enforcement mode
+    (set_enforce) we instead re-assert the held state every interval,
+    whether it is on or off.
     """
 
     def __init__(
@@ -126,11 +134,19 @@ class EarPairState:
         # Last time we transmitted a state-changing command.  Beacons heard
         # shortly afterwards may be stale (see BEACON_STALE_AFTER_COMMAND_S).
         self._last_command_at: float = 0.0
-        # Enforcement mode flag plus the last time this pair heard a beacon.
-        # While enforcing we re-assert state every ENFORCE_INTERVAL_S and
-        # assume the ears powered off after ENFORCE_ASSUME_OFF_S of silence.
-        self.enforce = False
+        # Last time this pair heard a beacon.  The passive assume-off rule
+        # (assume_off_if_silent) turns the lights off after BEACON_TIMEOUT_S
+        # of silence; keeping this per-pair stops one room keeping another
+        # alive when they share a hub.
         self._last_beacon_at: float = 0.0
+        # Last time enforcement actually transmitted a re-assert.  Drives
+        # the OFF-target back-off (see enforce_tick); both the periodic tick
+        # and the immediate enforce_reassert update it.
+        self._last_reassert_at: float = 0.0
+        # Enforcement mode flag: when True the pair is always re-asserted
+        # (on or off) and foreign commands are overridden rather than
+        # adopted.
+        self.enforce = False
 
     # -- display ---------------------------------------------------------
 
@@ -212,47 +228,77 @@ class EarPairState:
         """Turn enforcement of the light-entity state on or off.
 
         ON: we become the sole authority -- foreign commands are overridden
-        and the held state is re-asserted periodically (see
-        async_enforce_tick).  OFF: revert to passive reflect-what-we-hear.
-        The flag is purely user-controlled; it is not cleared by assume-off.
+        and the held state is re-asserted periodically (see enforce_tick)
+        whether that state is on or off.  OFF: revert to passive
+        reflect-what-we-hear.  The flag is purely user-controlled.
         """
         if self.enforce != on:
             self.enforce = on
             self.resume()  # enforcement pauses any suspension
             self._notify()
 
-    def assume_off_if_silent(self) -> bool:
-        """While enforcing, turn the ears off after a beacon gap.
+    async def enforce_tick(self) -> None:
+        """Periodic enforcement heartbeat, respecting the per-state cadence.
 
-        Used the per-pair last-beacon timestamp so rooms sharing one hub
-        don't keep each other alive.  Returns True if state changed (the
-        caller should notify HA).  No-op in passive mode.
+        Runs on the shared ENFORCE_INTERVAL_S ticker but only actually
+        transmits when it is time for this pair:
+
+        - enforced ON:  re-assert every ENFORCE_INTERVAL_S (hold colour
+          against demo/standalone drift),
+        - enforced OFF: back off to ENFORCE_OFF_INTERVAL_S so we keep the
+          ears out of demo mode without flogging the IR bus (keeps them
+          dark by resetting the demo-entry timer before it fires).
+
+        Always a single transmission (one pass, no extra repeats).  Only
+        runs while the enforce switch is on.
         """
         if not self.enforce:
+            return
+        on = any(self.desired_on.values())
+        interval = (
+            ENFORCE_INTERVAL_S if on else ENFORCE_OFF_INTERVAL_S
+        )
+        if self._clock() - self._last_reassert_at < interval:
+            return
+        await self._send_state(0)
+        self._last_reassert_at = self._clock()
+
+    async def enforce_reassert(self) -> None:
+        """Immediate re-assert, bypassing the cadence back-off.
+
+        Called when a foreign (non-echo) MWM phrase is heard while
+        enforcing: we can't tell what the ears were driven to, so pull our
+        held state back now and restart the back-off timer.  No-op when not
+        enforcing.
+        """
+        if not self.enforce:
+            return
+        await self._send_state(0)
+        self._last_reassert_at = self._clock()
+
+    # -- passive silence rule ---------------------------------------------
+
+    def assume_off_if_silent(self, timeout_s: float) -> bool:
+        """Reflect that the ears powered off after beacon silence.
+
+        Applies ONLY when NOT enforcing and a light is on: if no beacon has
+        been heard for *timeout_s*, we assume the ears powered off and turn
+        the lights off.  Returns True if state changed (the caller should
+        notify HA).  Enforcement mode never assumes off -- it always
+        re-asserts its own state via enforce_tick.
+        """
+        if self.enforce:
             return False
         if not any(self.desired_on.values()):
             return False
         if self._last_beacon_at == 0:
             return False  # never heard a beacon yet; don't clamp
-        if self._clock() - self._last_beacon_at < ENFORCE_ASSUME_OFF_S:
+        if self._clock() - self._last_beacon_at < timeout_s:
             return False
         self.running_effect = None
         self.desired_on = {LEFT: False, RIGHT: False}
         self._notify()
         return True
-
-    async def enforce_tick(self) -> None:
-        """One enforcement heartbeat: re-assert the held state if on.
-
-        Re-asserts with a single transmission (one pass, no extra repeats):
-        the command recurs every ENFORCE_INTERVAL_S so ears that drift back
-        to demo/standalone mode are pulled onto our colour again.  A dead
-        pair (assumed-off) has desired_on False and sends nothing here.
-        """
-        if not self.enforce:
-            return
-        if any(self.desired_on.values()):
-            await self._send_state(0)
 
     # -- commands ---------------------------------------------------------
 
@@ -607,8 +653,12 @@ class ObservedHub:
 
     def ingest(
         self, frames: list[bytes], *, receiver: str | None = None,
-    ) -> None:
+    ) -> set:
         """Feed decoded frames from ONE receiver into the shared view.
+
+        Returns the set of enforcing pairs that heard an authoritative
+        (non-echo) signal and should be immediately re-asserted by the
+        caller (see __init__._make_signal_handler).
 
         *receiver* is the entity_id of the receiver that heard the signal.
         When provided, foreign-command adoption and echo detection are
@@ -636,6 +686,11 @@ class ObservedHub:
         bundle = describe_bundle(valid)
         command_frames = [valid[0]] if bundle else valid
         changed = False
+        # Enforcing pairs that heard an authoritative (non-echo) signal and
+        # should be pulled back onto their held state immediately, rather
+        # than waiting for the next enforce_tick.  Deduped so one receive
+        # batch produces at most one re-assert per pair.
+        reassert: set = set()
         for frame in valid:
             desc = describe_frame(frame)
             self.seen += 1
@@ -659,9 +714,9 @@ class ObservedHub:
                     # beacons arriving AFTER the stale window (i.e. the
                     # ears genuinely kept/woke beaconing) flip desired_on.
                     now = self._clock()
-                    # Every beacon (ours or foreign) proves the ears are
-                    # alive; enforcement uses this per-pair liveness so a
-                    # room sharing the hub is not kept alive by another.
+                    # Record per-pair beacon liveness for the passive
+                    # assume-off rule; scoping it to each pair stops one
+                    # room keeping another alive when they share a hub.
                     pair._last_beacon_at = now
                     stale = (
                         now - pair._last_command_at
@@ -669,6 +724,11 @@ class ObservedHub:
                     )
                     if not stale:
                         pair.desired_on = {LEFT: True, RIGHT: True}
+                    # We never transmit beacons, so any beacon heard is
+                    # foreign -- while enforcing, pull back onto our held
+                    # state (the one true re-assert trigger is "not ours").
+                    if pair.enforce:
+                        reassert.add(pair)
                     pair.running_effect = (
                         effect_label(demo_effect) if demo_effect is not None
                         else None
@@ -690,34 +750,32 @@ class ObservedHub:
             self.last_foreign_summary = f"[{desc['kind']}] {desc['summary']}"
             for pair in target_pairs:
                 if pair.enforce:
+                    # Foreign command while enforcing: don't adopt it, but
+                    # pull our held state back immediately.  (Our own echoes
+                    # were filtered above by matches_recent.)
+                    reassert.add(pair)
                     continue
                 pair.adopt_decoded(frame)
                 pair.suspend(f"foreign command: {desc['summary']}")
         if changed:
             self._notify()
+        return reassert
 
     def snapshot(self) -> str:
         snap = self.tracker.snapshot()
         return snap if snap else "unknown"
 
     def check_beacon_timeout(self, timeout_s: float) -> bool:
-        """Clear ear state when no beacon has arrived for *timeout_s*.
+        """Apply the passive assume-off rule to every non-enforcing pair.
 
-        Returns True if state was changed (listeners should be notified).
+        Returns True if any pair's displayed state changed (the caller
+        should notify HA).  Enforcing pairs are skipped by
+        assume_off_if_silent -- they always re-assert their own state
+        rather than assuming off.
         """
-        if self.last_beacon_at == 0:
-            return False  # never heard a beacon yet; don't clamp
-        elapsed = self._clock() - self.last_beacon_at
-        if elapsed < timeout_s:
-            return False
         changed = False
         for pair in self.pairs:
-            if pair.enforce:
-                continue  # enforcement owns its own assume-off rule
-            if any(pair.desired_on.values()) or pair.running_effect:
-                pair.running_effect = None
-                pair.desired_on = {LEFT: False, RIGHT: False}
-                pair._notify()
+            if pair.assume_off_if_silent(timeout_s):
                 changed = True
         return changed
 

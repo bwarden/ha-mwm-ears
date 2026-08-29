@@ -72,12 +72,23 @@ box, which the form suggests together; either half is optional:
     repeated** beyond its initial multi-burst; effect invocations likewise
     fire once.
   - The *Enforce Ears* switch (one per room) flips this to sole control:
-    when ON, the integration re-asserts the light-entity state every ~10 s
-    so ears that drift to demo/standalone mode are pulled back onto your
-    colour, and foreign commands are overridden rather than adopted. If no
-    beacon is heard for ~45 s while enforcing, we assume the ears powered
-    off and the lights reflect off until you turn one on again. Defaults
-    to OFF (passive).
+    when ON, the integration takes over: it re-asserts the light-entity
+    state immediately any time it hears a foreign MWM phrase (beacon, wand,
+    or other transmitter) rather than adopting it -- ears are pulled back
+    onto your state, held OFF or ON. On the periodic timer: an enforced ON
+    is re-asserted every ~10 s (to hold colour against demo/standalone
+    drift), while an enforced OFF backs off to every ~90 s -- just under
+    the ~2 min after which ears fall back into demo mode -- so they stay
+    dark without flogging the IR bus. Foreign commands are overridden rather
+    than adopted; our own echoes are ignored. **Enforcement never assumes
+    off**. Defaults to OFF (passive).
+  - The assume-off silence rule applies only while NOT enforcing: if no
+    beacon is heard for ~180 s (3 min) while a light is ON (and the enforce
+    switch is off), we assume the ears powered off and the lights reflect
+    off. The window exceeds the ~2 min of silence ears naturally show after
+    a command before they begin demo-beaconing again, so it can't misfire on
+    an on-but-quiet pair. A room that is enforcing instead always re-asserts
+    its target state.
 - **Infrared receiver** -> captured timing signals are decoded locally
   (end-bit-swallowed bytes recovered by CRC brute-force) into diagnostic
   sensors:
