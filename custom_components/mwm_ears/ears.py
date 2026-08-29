@@ -281,19 +281,24 @@ class EarPairState:
     def assume_off_if_silent(self, timeout_s: float) -> bool:
         """Reflect that the ears powered off after beacon silence.
 
-        Applies ONLY when NOT enforcing and a light is on: if no beacon has
-        been heard for *timeout_s*, we assume the ears powered off and turn
-        the lights off.  Returns True if state changed (the caller should
-        notify HA).  Enforcement mode never assumes off -- it always
-        re-asserts its own state via enforce_tick.
+        Applies ONLY when NOT enforcing and a light is on: if we have had no
+        evidence the ears are alive for *timeout_s*, assume they powered off
+        and turn the lights off.  Returns True if state changed (the caller
+        should notify HA).  Enforcement mode never assumes off -- it always
+        re-asserts its own state via enforce_reassert/enforce_tick.
+
+        "Evidence" is the most recent of any beacon heard or any state
+        command *we* sent.  Anchoring on the command (not just on a beacon)
+        matters for a pair that has NEVER beamed since startup (ears dead or
+        carried away): without it, `_last_beacon_at` stays 0 forever and such
+        a room, once turned on, could never be assumed off again.
         """
         if self.enforce:
             return False
         if not any(self.desired_on.values()):
             return False
-        if self._last_beacon_at == 0:
-            return False  # never heard a beacon yet; don't clamp
-        if self._clock() - self._last_beacon_at < timeout_s:
+        last_evidence = max(self._last_beacon_at, self._last_command_at)
+        if self._clock() - last_evidence < timeout_s:
             return False
         self.running_effect = None
         self.desired_on = {LEFT: False, RIGHT: False}

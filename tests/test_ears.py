@@ -333,6 +333,17 @@ class EnforcementTests(unittest.TestCase):
         self.assertFalse(any(h.pair.desired_on.values()))
         self.assertIsNone(h.pair.running_effect)
 
+    def test_assume_off_when_never_beamed(self):
+        # A room that is turned ON but never beacons (ears dead or carried
+        # away) must still be assumed off after the timeout.  The old guard
+        # on `_last_beacon_at == 0` left such a pair stuck ON forever.
+        h = HubHarness()
+        run(h.pair.apply_simple_both(0x64))  # turn on, no beacon ever arrives
+        self.assertFalse(h.pair.assume_off_if_silent(45.0))
+        h.now += 45.0 + 1.0
+        self.assertTrue(h.pair.assume_off_if_silent(45.0))
+        self.assertFalse(any(h.pair.desired_on.values()))
+
     def test_assume_off_never_while_enforcing(self):
         # Enforcing never assumes off -- even after beacon silence.
         h = HubHarness()
