@@ -80,8 +80,14 @@ box, which the form suggests together; either half is optional:
     drift), while an enforced OFF backs off to every ~90 s -- just under
     the ~2 min after which ears fall back into demo mode -- so they stay
     dark without flogging the IR bus. Foreign commands are overridden rather
-    than adopted; our own echoes are ignored. **Enforcement never assumes
-    off**. Defaults to OFF (passive).
+    than adopted; our own echoes are ignored. A beacon that proves the ears
+    physically alive never moves an enforcing room's light entity either --
+    the held command is the whole truth for its display, so a held OFF stays
+    showing off even while the ears demo-beacon beneath the re-assert. When
+    the switch is switched ON, whatever the room is *currently* showing
+    (including a state a foreign wand just drove) becomes the held state, so
+    the first re-assert never overrides the live display with a stale
+    command. **Enforcement never assumes off**. Defaults to OFF (passive).
   - The assume-off silence rule applies only while NOT enforcing: if no
     beacon is heard for ~180 s (3 min) while a light is ON (and the enforce
     switch is off), we assume the ears powered off and the lights reflect

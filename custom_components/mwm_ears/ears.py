@@ -147,6 +147,18 @@ class EarPairState:
         # (on or off) and foreign commands are overridden rather than
         # adopted.
         self.enforce = False
+        # The exact IR frames of the last command that drove the display --
+        # a user pick OR an adopted foreign frame.  Enforcement re-asserts
+        # THESE (not a passive re-derivation) so it faithfully holds whatever
+        # was last asked for -- simple colour, palette shade, or effect
+        # program -- and so that switching enforcement ON after a foreign
+        # wand took over re-anchors to the adopted state instead of
+        # re-blasting a stale pre-wand command.  `_state_frames()` only
+        # expresses simple codes, so it is the fallback when no command has
+        # ever been issued or adopted (fresh restart while enforcing
+        # defaults to all-off).  Set at every user-command site (via
+        # _send_state / callers) and at every adoption site (adopt_decoded).
+        self._hold_frames: list[bytes] | None = None
 
     # -- display ---------------------------------------------------------
 
@@ -260,7 +272,7 @@ class EarPairState:
         )
         if self._clock() - self._last_reassert_at < interval:
             return
-        await self._send_state(0)
+        await self._send_held_state()
         self._last_reassert_at = self._clock()
 
     async def enforce_reassert(self) -> None:
@@ -273,7 +285,7 @@ class EarPairState:
         """
         if not self.enforce:
             return
-        await self._send_state(0)
+        await self._send_held_state()
         self._last_reassert_at = self._clock()
 
     # -- passive silence rule ---------------------------------------------
@@ -354,8 +366,26 @@ class EarPairState:
                     _LOGGER.exception("transmit failed (pass %d)", attempt)
 
     async def _send_state(self, repeat_count: int) -> None:
-        """Send the composed current pair state."""
-        await self._send_group(self._state_frames(), repeat_count)
+        """Send the composed current pair state.
+
+        Also records the exact frames as the hold set, so enforcement can
+        re-assert *what was actually asked for* rather than re-deriving
+        from `codes` (which cannot express palette shades or effects).
+        """
+        self._hold_frames = self._state_frames()
+        await self._send_group(self._hold_frames, repeat_count)
+
+    async def _send_held_state(self) -> None:
+        """Send whatever we are currently HOLDING for enforcement.
+
+        Prefers the exact frames of the last command that drove the display
+        (`_hold_frames` -- user pick or adopted foreign frame; can be a
+        palette shade, an effect program, or a fused distinct-color pair).
+        Falls back to `_state_frames()` when nothing has ever driven the
+        display (fresh restart while enforcing defaults to all-off).
+        """
+        frames = self._hold_frames or self._state_frames()
+        await self._send_group(frames, 0)
 
     async def _send(self, frame: bytes, repeat_count: int) -> None:
         await self._transmit(frame, repeat_count)
@@ -387,6 +417,7 @@ class EarPairState:
             and EAR_OFF_CODE <= code <= 0x67
         ):
             frames = [build_frame([RIGHT_ONLY_BASE + code - EAR_OFF_CODE])]
+            self._hold_frames = frames
             await self._send_group(frames, BURST_REPEATS)
             return
         await self._send_state(BURST_REPEATS)
@@ -443,6 +474,11 @@ class EarPairState:
                 self.running_effect = desc["summary"]
                 self.palette_code = {LEFT: None, RIGHT: None}
                 self.desired_on = {LEFT: True, RIGHT: True}
+            # The adopted phrase is exactly what drove the display; holding
+            # it lets enforcement re-assert the foreign state faithfully if
+            # this room is later put into enforce mode (re-anchors the hold
+            # instead of re-blasting an earlier user command).
+            self._hold_frames = [bytes(frame)]
             self._notify()
             return changed
         if len(content) == 1 and 0x60 <= content[0] <= 0x67:
@@ -498,6 +534,10 @@ class EarPairState:
         else:
             changed = False
         if changed:
+            # Record the adopted frames as the hold (see the wand-command
+            # branch above): enforcement re-asserts whatever most recently
+            # drove the display, user command or foreign adoption.
+            self._hold_frames = [bytes(frame)]
             self._notify()
         return changed
 
@@ -521,7 +561,9 @@ class EarPairState:
             self.running_effect = None
             self.desired_on[RIGHT] = True
             self.resume()
-            await self._send_group([frame(index | 0x80)], BURST_REPEATS)
+            frames = [frame(index | 0x80)]
+            self._hold_frames = frames
+            await self._send_group(frames, BURST_REPEATS)
             return
 
         restore_right = (
@@ -536,6 +578,7 @@ class EarPairState:
         frames = [frame(index)]
         if restore_right:
             frames.append(frame(self.palette_code[RIGHT] | 0x80))
+        self._hold_frames = frames
         await self._send_group(frames, BURST_REPEATS)
 
     async def apply_effect(self, index: int, label: str) -> None:
@@ -545,7 +588,9 @@ class EarPairState:
         self.palette_code = {LEFT: None, RIGHT: None}
         self.desired_on = {LEFT: True, RIGHT: True}
         self.resume()
-        await self._send(build_frame([0x24, 0x48, index]), BURST_REPEATS)
+        hold = build_frame([0x24, 0x48, index])
+        self._hold_frames = [hold]
+        await self._send(hold, BURST_REPEATS)
 
     async def turn_on_side(self, side: str) -> int:
         """Light one ear with its remembered simple color.
@@ -579,9 +624,9 @@ class EarPairState:
         if side == RIGHT:
             # Right-only OFF is a verified single form (`90 68`): the left
             # ear stays untouched -- no compose flash.
-            await self._send_group(
-                [build_frame([RIGHT_ONLY_BASE])], BURST_REPEATS
-            )
+            frames = [build_frame([RIGHT_ONLY_BASE])]
+            self._hold_frames = frames
+            await self._send_group(frames, BURST_REPEATS)
             return
         await self._send_state(BURST_REPEATS)
 
@@ -710,14 +755,19 @@ class ObservedHub:
                 # touched — cross-room pollution is not possible.
                 demo_effect = desc.get("demo_effect")
                 for pair in target_pairs:
-                    # The effect/alive observations always update; they are
-                    # what the sensor/snapshot report.  But we must NOT
+                    # The alive observations always update; they are what
+                    # the sensor/snapshot report.  But we must NOT
                     # re-assert desired_on=True from a beacon heard right
                     # after our own command: that beacon was likely already
                     # in flight when the ears processed e.g. an "all off",
                     # so it would slide the entity straight back on.  Only
                     # beacons arriving AFTER the stale window (i.e. the
                     # ears genuinely kept/woke beaconing) flip desired_on.
+                    # An ENFORCING pair is exempt from that flip entirely:
+                    # the held command is the whole truth for it (they
+                    # still re-assert below on every beacon), so a beacon-
+                    # proven-live ear beneath a held OFF command must not
+                    # slide the entity back ON.
                     now = self._clock()
                     # Record per-pair beacon liveness for the passive
                     # assume-off rule; scoping it to each pair stops one
@@ -727,18 +777,26 @@ class ObservedHub:
                         now - pair._last_command_at
                         <= BEACON_STALE_AFTER_COMMAND_S
                     )
-                    if not stale:
+                    if not stale and not pair.enforce:
                         pair.desired_on = {LEFT: True, RIGHT: True}
                     # We never transmit beacons, so any beacon heard is
                     # foreign -- while enforcing, pull back onto our held
                     # state (the one true re-assert trigger is "not ours").
                     if pair.enforce:
                         reassert.add(pair)
-                    pair.running_effect = (
-                        effect_label(demo_effect) if demo_effect is not None
-                        else None
-                    )
-                    pair.palette_code = {LEFT: None, RIGHT: None}
+                    # The effect/colour observations report what the ears
+                    # are *currently* doing (useful for diagnostics), but
+                    # for an ENFORCING pair they must not clobber the held
+                    # command: enforcement re-asserts its own state, so we
+                    # only mirror beacon-observed effect/palette into the
+                    # passive (non-enforcing) display state.
+                    if not pair.enforce:
+                        pair.running_effect = (
+                            effect_label(demo_effect)
+                            if demo_effect is not None
+                            else None
+                        )
+                        pair.palette_code = {LEFT: None, RIGHT: None}
         for frame in command_frames:
             desc = describe_frame(frame)
             if desc["kind"] == "beacon":

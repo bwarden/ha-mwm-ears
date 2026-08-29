@@ -400,6 +400,121 @@ class EnforcementTests(unittest.TestCase):
         echo = build_frame([0x64])
         self.assertNotIn(h.pair, h.hub.ingest([echo]))
 
+    def test_enforce_reasserts_exact_held_palette_frames(self):
+        """Palette shades cannot be re-expressed via simple codes; the
+        enforcement re-assert must replay the exact held frames of the last
+        explicit pick (91 0E pp), not a re-derived 90 6X state."""
+        h = HubHarness()
+        run(h.pair.apply_palette(0x03))  # both ears to palette shade 0x03
+        h.pair.set_enforce(True)
+        h.calls.clear()
+        run(h.pair.enforce_tick())
+        self.assertEqual(
+            h.calls,
+            [(build_frame([0x0E, 0x03]).hex().upper(), 0)],
+        )
+
+    def test_enforce_reasserts_held_effect_frames(self):
+        """Effect programs are held and re-asserted frame-for-frame too:
+        the 24-prefixed invocation must replay, not a simple colour."""
+        h = HubHarness()
+        run(h.pair.apply_effect(0x84, "Strobe flash"))
+        h.pair.set_enforce(True)
+        h.calls.clear()
+        run(h.pair.enforce_tick())
+        self.assertEqual(
+            h.calls,
+            [(build_frame([0x24, 0x48, 0x84]).hex().upper(), 0)],
+        )
+
+    def test_enforce_fresh_restart_defaults_to_off(self):
+        """A pair that (re)started while enforcing and has never received an
+        explicit command holds all-off -- never a re-derived transient."""
+        h = HubHarness()
+        h.pair.set_enforce(True)
+        h.calls.clear()
+        run(h.pair.enforce_tick())
+        self.assertEqual(h.calls, [(build_frame([0x60]).hex().upper(), 0)])
+
+    def test_enable_enforce_after_foreign_adoption_holds_adopted(self):
+        """Turning enforcement ON after a foreign command was adopted must
+        re-anchor the hold to the ADOPTED display state, not re-blast the
+        stale pre-wand user command (was: switch-on raced the two and the
+        first re-assert overrode what the room was actually showing)."""
+        h = HubHarness()
+        run(h.pair.apply_simple_both(0x64))   # user: red
+        h.hub.ingest([build_frame([0x62])])   # foreign blue adopted
+        self.assertEqual(h.pair.codes, {ears.LEFT: 0x62, ears.RIGHT: 0x62})
+        h.pair.set_enforce(True)
+        h.calls.clear()
+        run(h.pair.enforce_tick())
+        # It holds the adopted blue, NOT the pre-wand red.
+        self.assertEqual(h.calls, [(build_frame([0x62]).hex().upper(), 0)])
+
+    def test_enable_enforce_after_wand_adoption_holds_phrase(self):
+        """A foreign wand program drives a running_effect we cannot recompose
+        from codes; enabling enforcement must hold the captured phrase bytes
+        itself so the re-assert faithfully replays the foreign state."""
+        h = HubHarness()
+        run(h.pair.apply_simple_both(0x64))   # user: red
+        phrase = bytes.fromhex("9619102410D24E03")  # pulsating red wand program
+        h.hub.ingest([build_frame(phrase)])
+        self.assertIsNotNone(h.pair.running_effect)
+        h.pair.set_enforce(True)
+        h.calls.clear()
+        run(h.pair.enforce_reassert())        # immediate re-assert, no back-off
+        self.assertEqual(h.calls, [(build_frame(phrase).hex().upper(), 0)])
+
+    def test_enforcing_pair_never_clobbers_hold(self):
+        """While already enforcing, foreign frames are overridden (not
+        adopted) and must not move `_hold_frames` -- the held red stays the
+        red frames even after a foreign blue arrives beneath the re-assert."""
+        h = HubHarness()
+        run(h.pair.apply_simple_both(0x64))  # red held
+        h.pair.set_enforce(True)
+        h.now += 1.0
+        h.hub.ingest([build_frame([0x61])])  # foreign blue, overridden
+        self.assertIn(h.pair, h.hub.ingest([build_frame([0x61])]))
+        self.assertEqual(h.pair._hold_frames, [build_frame([0x64])])
+
+    def test_enforcing_off_beacon_does_not_relight_display(self):
+        """Enforcing an OFF target: a live (non-stale) beacon proves the ears
+        are physically on -- exactly the demo-mode aftermath of a power-on --
+        but enforcement is sole authority: the entity must keep showing our
+        held OFF even though the beacon still triggers the immediate re-
+        assert that keeps the hardware dark."""
+        h = HubHarness()
+        run(h.pair.apply_simple_both(ears.EAR_OFF_CODE))
+        h.pair.set_enforce(True)
+        # Advance past the stale window so the beacon is GENUINELY live:
+        # that is the case that used to slide the enforcing-OFF display on.
+        h.now += ears.BEACON_STALE_AFTER_COMMAND_S + 1.0
+        beacon = build_frame([0x42, 0x00, 0x00, 0x48, 0x88, 0x0C, 0x40])
+        reassert = h.hub.ingest([beacon])
+        # The beacon still pulls the ears back onto our held OFF...
+        self.assertIn(h.pair, reassert)
+        # ...but the display must not slide back ON, and the beacon's demo
+        # effect must not clobber the held (all-off) display either.
+        self.assertFalse(any(h.pair.desired_on.values()))
+        self.assertIsNone(h.pair.running_effect)
+
+    def test_enforcing_on_beacon_keeps_held_on(self):
+        """Enforcing an ON target, a beacon only confirms the held-live
+        state -- desired_on stays as commanded (no accidental flip off)."""
+        h = HubHarness()
+        run(h.pair.apply_simple_both(0x64))  # red held
+        h.pair.set_enforce(True)
+        h.now += ears.BEACON_STALE_AFTER_COMMAND_S + 1.0
+        beacon = build_frame([0x42, 0x00, 0x00, 0x48, 0x88, 0x0C, 0x40])
+        self.assertIn(h.pair, h.hub.ingest([beacon]))
+        self.assertTrue(all(h.pair.desired_on.values()))
+        # Passive peers still adopt the beacon's effect into the display.
+        h2 = HubHarness()
+        run(h2.pair.apply_simple_both(0x64))
+        h2.now += ears.BEACON_STALE_AFTER_COMMAND_S + 1.0
+        h2.hub.ingest([beacon])
+        self.assertIsNotNone(h2.pair.running_effect)
+
 
 class CrossRoomIsolationTests(unittest.TestCase):
     """Foreign commands on one receiver must not mutate pairs in other rooms."""
