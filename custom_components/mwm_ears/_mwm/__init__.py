@@ -15,9 +15,6 @@ Sources of truth (all in this repo):
                                       examples.  Original measurements by
                                       oPossum (DIYC forum post #259750);
                                       CRC-8 validated.
-    docs/mwm-gwts-protocol.md     -- physical-layer notes, timing
-                                      measurements, receiver/transmitter
-                                      rig documentation.
     web/src/lib/protocol/mwm.ts   -- TypeScript framing reference (toPronto,
                                       decodeMWM) used by the browser UI.
     IRremoteESP8266               -- upstream decodeMWM algorithm; our

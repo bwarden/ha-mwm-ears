@@ -325,8 +325,8 @@ class EarPairState:
         Equal pairs use the canonical both-ears form (`90 6X`).  When
         left and right differ, a *fused* 2-byte phrase sets each ear in
         a single IR frame (samples/mwm-gwts-colors.tsv row
-        ``left-blue-right-green-fused``; docs/mwm-gwts-protocol.md
-        section "Left vs right ears"):
+        ``left-blue-right-green-fused``; docs/mwm-show-protocol.md
+        section 4, "Left vs right ears"):
 
             ``91 <left> <right-only(right)>``
 

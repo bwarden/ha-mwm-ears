@@ -17,15 +17,13 @@ gap.  This mirrors web/src/lib/protocol/mwm.ts toPronto().
 
 Sources of truth:
     docs/mwm-show-protocol.md         -- Frame layout, length rule, CRC-8,
-        55 AA additive checksum, timing constants (TICK_US, FOOTER_GAP_US,
-        CARRIER_HZ).
+        55 AA additive checksum, and timing constants (TICK_US,
+        FOOTER_GAP_US, CARRIER_HZ); mark/space widths from the rig.
     web/src/lib/protocol/mwm.ts       -- TypeScript reference for toPronto()
         and timings_for_frame(); this module mirrors its tick-merging and
         sign convention.
     IRremoteESP8266 (decodeMWM)        -- Upstream algorithm confirming
         2400 bps UART encoding and carrier frequency.
-    docs/mwm-gwts-protocol.md      -- Physical-layer timing measurements
-        from the rig (mark/space widths, gap duration).
 """
 
 from __future__ import annotations

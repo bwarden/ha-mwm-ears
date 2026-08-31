@@ -20,8 +20,7 @@ Sources of truth:
         the 2400 bps UART encoding, tick-merging (kMAX_WIDTH=9), and
         end-bit-swallowing recovery.
     docs/mwm-show-protocol.md          -- Frame length rule, CRC-8/Dallas,
-        and inter-message gap structure.
-    docs/mwm-gwts-protocol.md       -- Physical-layer timing measurements
+        inter-message gap structure, and physical-layer timing measurements
         from the rig (TICK_US=417, DELTA_US tolerance, gap thresholds).
 """
 
