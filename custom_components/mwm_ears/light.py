@@ -163,10 +163,10 @@ class MwmEarLight(LightEntity):
             "room_state": self._hub.snapshot(),
             "note": (
                 "Right-ear picks use verified right-only frames directly; "
-                "left picks coordinate both-ears + right-only frames "
-                "(left palette picks fall back to both ears unless the "
-                "right ear already holds a palette shade). Repeats pause "
-                "while a foreign MWM command is in charge."
+                "left picks fuse the pair into one frame so the right ear "
+                "keeps its colour (palette or simple) with no flash or "
+                "clobber. Repeats pause while a foreign MWM command is in "
+                "charge."
             ),
         }
 

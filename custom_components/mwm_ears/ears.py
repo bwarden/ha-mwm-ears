@@ -50,12 +50,13 @@ DEFAULT_COLOR_CODE = 0x67  # white
 _PALETTE_TEMPLATE = [0x19, 0x07, 0x0F, 0x16]
 _PALETTE_TEMPLATE_TAIL = [0x18, 0x04]
 
-# Total transmissions per logical command pass, REPEAT_GAP_S apart:
-# ir-mwm-send's proven default (--repeat 2). Two passes -- the first
-# warms cold receivers, the second lands.
+# Extra transmissions per logical command beyond the first, sent IMMEDIATELY
+# back-to-back (the frames' footers space them; no pause between repeats so
+# rapid colour-wheel browsing isn't held up). Mirrors ir-mwm-send which
+# repeats each frame; the extra pass covers a cold receiver / dropped IR.
 BURST_REPEATS = 1
-# Seconds between grouped re-transmissions of one logical command
-# (mirrors perl ir-mwm-send's proven 2x @ ~1.8 s recipe).
+# Kept for API/prototype compatibility (constructor default); the group
+# sender no longer pauses between passes.
 REPEAT_GAP_S = 1.8
 
 # Transmissions newer than this count as our own echo when overheard.
@@ -98,7 +99,7 @@ RIGHT_ONLY_BASE = 0x68
 class EarPairState:
     """Desired state of one transmitter's ear pair.
 
-    User-initiated sends use repeat_count=BURST_REPEATS extra spaced
+    User-initiated sends use repeat_count=BURST_REPEATS extra back-to-back
     transmissions.  In passive mode (the default) state is kept honest by
     detecting received IR frames rather than re-blasting periodically: a
     foreign MWM command overheard (wand, another transmitter) suspends
@@ -153,11 +154,12 @@ class EarPairState:
         # was last asked for -- simple colour, palette shade, or effect
         # program -- and so that switching enforcement ON after a foreign
         # wand took over re-anchors to the adopted state instead of
-        # re-blasting a stale pre-wand command.  `_state_frames()` only
-        # expresses simple codes, so it is the fallback when no command has
-        # ever been issued or adopted (fresh restart while enforcing
-        # defaults to all-off).  Set at every user-command site (via
-        # _send_state / callers) and at every adoption site (adopt_decoded).
+        # re-blasting a stale pre-wand command.  `_state_frames()` (which
+        # composes palette shades into fused frames too) is the fallback
+        # when no command has ever been issued or adopted (fresh restart
+        # while enforcing defaults to all-off).  Set at every user-command
+        # site (via _send_state / callers) and at every adoption site
+        # (adopt_decoded).
         self._hold_frames: list[bytes] | None = None
 
     # -- display ---------------------------------------------------------
@@ -319,43 +321,67 @@ class EarPairState:
 
     # -- commands ---------------------------------------------------------
 
+    def _ear_color(self, side: str) -> tuple[str, int]:
+        """Resolve one ear's effective colour as ('simple'|'palette', value).
+
+        A palette shade wins over any lingering simple code: applying a
+        palette shade records it in ``palette_code`` and leaves ``codes``
+        stale, so the palette entry is authoritative when present.
+        """
+        pp = self.palette_code.get(side)
+        if pp is not None:
+            return ("palette", pp & 0x7F)
+        return ("simple", self.codes[side])
+
     def _state_frames(self) -> list[bytes]:
         """Verified-form frames expressing the current pair state.
 
-        Equal pairs use the canonical both-ears form (`90 6X`).  When
-        left and right differ, a *fused* 2-byte phrase sets each ear in
-        a single IR frame (samples/mwm-gwts-colors.tsv row
-        ``left-blue-right-green-fused``; docs/mwm-show-protocol.md
-        section 4, "Left vs right ears"):
+        Equal pairs use the canonical both-ears form (`90 6X` simple,
+        `91 0E pp` palette).  When left and right differ, a single *fused*
+        phrase sets each ear in one IR frame (samples/mwm-gwts-colors.tsv
+        row ``left-blue-right-green-fused``; docs/mwm-show-protocol.md
+        section 4, "Left vs right ears" and 12.13):
 
-            ``91 <left> <right-only(right)>``
+            ``91 6L 6R ..``          simple left  + simple right
+            ``92 6L 0E R|80 ..``     simple left  + palette right
+            ``92 0E L 6R ..``        palette left + simple right
+            ``93 0E L 0E R|80 ..``   palette left + palette right
 
-        The first byte (`60`-`67`) brings both ears to the left colour;
-        the second byte (`68`-`6F`) overrides only the right ear.
-        Multi-byte phrases run opcodes sequentially against both ears, so
-        a both-ear opcode followed by a right-only opcode achieves
-        per-side control in one burst.  Equal pairs need only the single
-        both-ears form (including canonical ``90 60`` off).
+        Multi-byte phrases run opcodes sequentially against both ears, so a
+        both-ear opcode followed by a right-only opcode achieves per-side
+        control in one burst.  This is what lets a left-ear colour pick leave
+        the right ear untouched in a single transmission (no intermediate
+        flash, no clobbering a simple right with a both-ears palette frame).
         """
-        left, right = self.codes[LEFT], self.codes[RIGHT]
+        left = self._ear_color(LEFT)
+        right = self._ear_color(RIGHT)
         if left == right:
-            return [build_frame([left])]
-        return [build_frame([left, RIGHT_ONLY_BASE + (right - EAR_OFF_CODE)])]
+            if left[0] == "palette":
+                return [build_frame([0x0E, left[1]])]
+            return [build_frame([left[1]])]
+        lk, lv = left
+        rk, rv = right
+        if lk == "simple" and rk == "simple":
+            return [build_frame([lv, RIGHT_ONLY_BASE + rv - EAR_OFF_CODE])]
+        if lk == "simple" and rk == "palette":
+            return [build_frame([lv, 0x0E, rv | 0x80])]
+        if lk == "palette" and rk == "simple":
+            return [build_frame([0x0E, lv, RIGHT_ONLY_BASE + rv - EAR_OFF_CODE])]
+        return [build_frame([0x0E, lv, 0x0E, rv | 0x80])]
 
     async def _send_group(
         self, frames: list[bytes], repeat_count: int
     ) -> None:
         """Transmit frames as ONE logical command, repeated as a GROUP.
 
-        Every pass runs the full sequence back-to-back (the frames'
-        built-in footers provide inter-message spacing); passes are
-        spaced by the rig-proven gap so cold receivers get a warm-up
-        pass. One failed pass logs and continues: partial IR still
-        lands and the remaining passes heal it.
+        Every pass runs the full sequence back-to-back and passes are sent
+        immediately after one another -- the frames' built-in footers
+        provide the inter-message spacing (no artificial pause between
+        repeats, so rapid colour-wheel browsing isn't held up). One failed
+        pass logs and continues: partial IR still lands and the remaining
+        passes heal it.
         """
         for attempt in range(repeat_count + 1):
-            if attempt:
-                await asyncio.sleep(self.repeat_gap_s)
             for frame in frames:
                 try:
                     await self._transmit(frame, 0)
@@ -544,42 +570,35 @@ class EarPairState:
     async def apply_palette(self, index: int, side: str | None = None) -> None:
         """Apply a palette shade using the TSV short forms only.
 
-        Both-ears: `91 0E pp`; RIGHT-only: `91 0E pp|80` (samples/
-        mwm-gwts-colors.tsv). A LEFT pick composes [both -> index]
-        [right-only restore] when the right ear currently holds a
-        palette shade; otherwise it degrades to the both-ears form
-        because a simple colour cannot be re-expressed as a palette
-        shade (protocol limitation).
+        RIGHT-only: `91 0E pp|80` (samples/mwm-gwts-colors.tsv). With no
+        side (the both-ears entity) and for LEFT picks we record the new
+        state and let `_state_frames` compose a single fused frame.  The
+        fused form is what lets a LEFT palette pick leave the right ear
+        untouched in one burst -- no [both -> restore] two-frame flash, and
+        no degrading to a both-ears frame that clobbers a simple right ear.
         """
         target = side or "both"
-
-        def frame(pp: int) -> bytes:
-            return build_frame([0x0E, pp])
 
         if target == RIGHT:
             self.palette_code[RIGHT] = index
             self.running_effect = None
             self.desired_on[RIGHT] = True
             self.resume()
-            frames = [frame(index | 0x80)]
+            frames = [build_frame([0x0E, index | 0x80])]
             self._hold_frames = frames
             await self._send_group(frames, BURST_REPEATS)
             return
 
-        restore_right = (
-            target == LEFT and self.palette_code[RIGHT] is not None
-        )
-        self.palette_code[LEFT] = index
-        if not restore_right:
+        if target == BOTH:
+            self.palette_code[LEFT] = index
             self.palette_code[RIGHT] = index
+            self.desired_on = {LEFT: True, RIGHT: True}
+        else:  # LEFT wheel pick: change left, leave right exactly as it is
+            self.palette_code[LEFT] = index
+            self.desired_on[LEFT] = True
         self.running_effect = None
-        self.desired_on = {LEFT: True, RIGHT: True}
         self.resume()
-        frames = [frame(index)]
-        if restore_right:
-            frames.append(frame(self.palette_code[RIGHT] | 0x80))
-        self._hold_frames = frames
-        await self._send_group(frames, BURST_REPEATS)
+        await self._send_state(BURST_REPEATS)
 
     async def apply_effect(self, index: int, label: str) -> None:
         # 24 lets an invocation take effect while a built-in program runs;

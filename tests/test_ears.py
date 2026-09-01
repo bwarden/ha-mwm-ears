@@ -641,23 +641,61 @@ class PaletteSideTests(unittest.TestCase):
         run(h.pair.apply_palette(0x00, side="right"))
         h.calls.clear()
         run(h.pair.apply_palette(0x04, side="left"))
-        both = build_frame([0x0E, 0x04])
-        ronly = build_frame([0x0E, 0x80])
+        # LEFT palette pick preserves the right's palette shade by fusing
+        # the pair into ONE frame: left 0x04, right 0x00 (per-ear register).
+        fused = build_frame([0x0E, 0x04, 0x0E, 0x80])
+        self.assertEqual(fused.hex().upper(), "930E040E8022")
         self.assertEqual(
-            h.calls, [(both.hex().upper(), 0), (ronly.hex().upper(), 0),
-                      (both.hex().upper(), 0), (ronly.hex().upper(), 0)]
+            h.calls, [(fused.hex().upper(), 0)] * (ears.BURST_REPEATS + 1)
         )
         self.assertEqual(h.pair.palette_code["left"], 0x04)
         self.assertEqual(h.pair.palette_code["right"], 0x00)
 
-    def test_left_pick_degrades_to_both_without_right_palette(self):
+    def test_left_pick_preserves_simple_right_in_fused_frame(self):
         h = Harness()
-        run(h.pair.apply_simple("left", 0x64))
+        run(h.pair.apply_simple("left", 0x64))   # right still simple off
+        run(h.pair.apply_simple("right", 0x61))  # right holds simple blue
         h.calls.clear()
         run(h.pair.apply_palette(0x09, side="left"))
-        self.assertEqual(len(h.calls), ears.BURST_REPEATS + 1)
+        # LEFT palette pick must NOT clobber the simple right: fuse the pair
+        # into ONE frame (left palette 0x09, right simple blue via 0x68+..).
+        fused = build_frame([0x0E, 0x09, ears.RIGHT_ONLY_BASE + 0x61 - ears.EAR_OFF_CODE])
+        self.assertEqual(fused.hex().upper(), "920E096959")
+        self.assertEqual(
+            h.calls, [(fused.hex().upper(), 0)] * (ears.BURST_REPEATS + 1)
+        )
         self.assertEqual(h.pair.palette_code["left"], 0x09)
-        self.assertEqual(h.pair.palette_code["right"], 0x09)
+        self.assertIsNone(h.pair.palette_code["right"])
+        self.assertEqual(h.pair.codes["right"], 0x61)
+
+    def test_left_simple_pick_preserves_right_palette_in_fused_frame(self):
+        h = Harness()
+        run(h.pair.apply_palette(0x00, side="right"))
+        h.calls.clear()
+        run(h.pair.apply_simple("left", 0x64))
+        # Changing the LEFT simple colour must leave the right's palette
+        # shade untouched -- fused `92 64 0E 80` in one burst.
+        fused = build_frame([0x64, 0x0E, 0x00 | 0x80])
+        self.assertEqual(
+            h.calls, [(fused.hex().upper(), 0)] * (ears.BURST_REPEATS + 1)
+        )
+        self.assertEqual(h.pair.palette_code["right"], 0x00)
+        self.assertEqual(h.pair.codes["left"], 0x64)
+
+    def test_left_off_preserves_right_palette_in_fused_frame(self):
+        h = Harness()
+        run(h.pair.apply_palette(0x00, side="right"))
+        run(h.pair.apply_simple("left", 0x64))
+        h.calls.clear()
+        run(h.pair.turn_off_side("left"))
+        # Turning LEFT off (via both-ear op) tacks on a right-only palette
+        # restore so the right stays lit -- no clobber to off.
+        fused = build_frame([0x60, 0x0E, 0x00 | 0x80])
+        self.assertEqual(
+            h.calls, [(fused.hex().upper(), 0)] * (ears.BURST_REPEATS + 1)
+        )
+        self.assertEqual(h.pair.palette_code["right"], 0x00)
+        self.assertEqual(h.pair.codes["left"], 0x60)
 
     def test_side_names_read_per_side(self):
         h = Harness()
