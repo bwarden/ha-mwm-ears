@@ -118,6 +118,27 @@ def decode_timings(timings: list[int]) -> list[bytes]:
         data_bits = 0
         frame_bits = 0
 
+    def _backfill_tail() -> None:
+        """Complete the in-progress byte with spaces (stop bit + trailing
+        1-bits), mirroring the inter-message-gap handling below.
+
+        Both a wide gap run and the clean end of a Tasmota capture swallow
+        a message's final stop space (and any trailing 1-data-bits) into
+        the footer, so the last byte can end mid-way with its remaining
+        space-valued levels invisible -- back-fill them. `_validate_frame`
+        keeps any forged bits out via the length rule and checksum.
+        """
+        nonlocal data, frame_bits
+        while frame_bits % 10 != 0:
+            if frame_bits % 10 == 9:  # stop bit
+                state.append(data & 0xFF)
+                data = 0
+                frame_bits += 1
+                break
+            data >>= 1  # data bit, space = 1
+            data |= 0x80
+            frame_bits += 1
+
     for sign, width in runs:
         if sign < 0 and _is_inter_message_gap(width):
             # Trailing space-valued levels ride inside the ~30 ms
@@ -126,16 +147,7 @@ def decode_timings(timings: list[int]) -> list[bytes]:
             # it. Back-fill the remainder of the current byte with spaces,
             # then treat the rest of the run as a separator. Forged bits
             # are kept out by the length rule and checksum validation.
-            if frame_bits % 10 != 0:
-                while True:
-                    if frame_bits % 10 == 9:  # stop bit
-                        state.append(data & 0xFF)
-                        data = 0
-                        frame_bits += 1
-                        break
-                    data >>= 1  # data bit, space = 1
-                    data |= 0x80
-                    frame_bits += 1
+            _backfill_tail()
             finalize()
             continue
         ticks = _match_ticks(width)
@@ -164,5 +176,11 @@ def decode_timings(timings: list[int]) -> list[bytes]:
         else:
             continue
 
+    # Clean end of capture: if the signal ends mid-byte, the final stop
+    # space (and any trailing 1-bits) were swallowed by the omitted footer
+    # rather than appearing as a gap run -- back-fill them the same way so
+    # the trailing CRC/content byte is not dropped into the end-bit-swallow
+    # recovery and mis-reconstructed.
+    _backfill_tail()
     finalize()
     return frames

@@ -126,3 +126,37 @@ class EndByteRecoveryTests(unittest.TestCase):
     def test_full_length_frames_decode_normally(self):
         f = build_frame([0x61, 0x6A])  # two-opcode colour script frame
         self.assertEqual(decode_timings(raw_timings(f)), [f])
+
+
+class TailStopBitRecoveryTests(unittest.TestCase):
+    """The CRC byte's stop-space merges into the omitted footer, so the
+    capture ends mid-byte. The decoder must back-fill the missing stop bit
+    rather than brute-forcing a wrong-but-CRC-valid byte."""
+
+    def _footerless(self, frame: bytes) -> list[int]:
+        # raw_timings ends in the merged footer gap (a wide space). A Tasmota
+        # RawData capture omits that footer entirely, so the final byte's
+        # stop space rides invisibly in the missing gap: the signal ends
+        # mid-byte with the CRC byte's 8 data bits still present but no stop
+        # bit (39 tick runs instead of a 40-bit frame). Drop the footer run to
+        # reproduce that shape.
+        return raw_timings(frame)[:-1]
+
+    def test_recovers_frame_whose_crc_stop_bit_merged(self):
+        frame = build_frame([0x0E, 0x0F])  # 91 0E 0F 1E golden yellow
+        self.assertEqual(frame.hex().upper(), "910E0F1E")
+        got = decode_timings(self._footerless(frame))
+        self.assertEqual(got, [frame])
+        self.assertNotIn(bytes.fromhex("910E9F0F"), got)
+
+    def test_real_capture_91_0e_0f_1e(self):
+        # RawData received from 179E4E for the transmit 91 0E 0F 1E; all 17
+        # runs match the transmit exactly yet the old decoder reconstructed
+        # 91 0E 9F 0F.
+        from mwm.protocol import tasmota_timings
+
+        raw = "+465-370+1230-445+825-850+830-1270+1730-365+420-1670Ij+855-1655+1255"
+        runs = tasmota_timings(raw)
+        got = decode_timings(runs)
+        self.assertEqual(got, [bytes.fromhex("910E0F1E")])
+        self.assertNotIn(bytes.fromhex("910E9F0F"), got)
