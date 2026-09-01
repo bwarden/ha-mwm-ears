@@ -117,6 +117,60 @@ Message Count) rather than sharing the room name. Entries created
 before v0.3 (per-kind transmitter/receiver bindings) cannot migrate;
 delete and re-add them.
 
+## Lovelace card
+
+A Lovelace custom card is bundled with the integration
+(`custom_components/mwm_ears/frontend/mwm-ears-card.js`) for controlling the
+ears from the dashboard. It shows three palettes — **Left Ear**, **Both
+Ears**, **Right Ear** — with every representable colour, plus an **effects**
+picker, all driven through the integration's `light.*` entities so each pick
+emits the correct, verified IR frames (colour snapping, per-side composition,
+and effect invocation are all handled by the integration).
+
+### Install
+
+1. Make the JS reachable as a static resource. Either:
+   - copy the bundled `frontend/mwm-ears-card.js` into your HA `www/`
+     directory (e.g. `www/community/mwm_ears/mwm-ears-card.js`), or
+   - have the card served from the integration's install path.
+2. Register it as a Lovelace resource: **Settings → Dashboards → Resources →
+   Add**, then either *URL* mode pointing at
+   `/local/community/mwm_ears/mwm-ears-card.js` (type `module`), or
+   *JavaScript* mode pasting the file contents. *(YAML:* add an entry to
+   `resources:`.*)
+
+### Configure
+
+A card element (via the visual editor, or YAML):
+
+```yaml
+type: custom:mwm-ears-card
+entity: light.ears            # the "Ears" (Both) light — required
+left_entity: light.left_ear   # optional
+right_entity: light.right_ear # optional
+title: My Ears
+```
+
+- `entity` is the Both-ear light; it drives the "Both Ears" palette and the
+  effects picker.
+- `left_entity` / `right_entity` are optional. A side palette without its
+  entity is shown read-only; provide all three for full per-ear control.
+- The swatches come from the live `color_palette` entity attribute
+  (`python/.../_mwm/palette.py::color_palette`), so the card always shows
+  exactly the colours the integration can represent — no palette copy in JS.
+
+### Behaviour
+
+- Clicking a swatch calls `light.turn_on` with that RGB on the matching side
+  entity; the integration snaps to the nearest verified ear shade and emits
+  the right frames (simple right-only, composed both+restore for left,
+  canonical both for both).
+- **On / Off** control the whole pair (the Both entity). **Restore colour**
+  clears a running effect and re-issues the remembered colour (a bare
+  `turn_on`); it does not turn the ears off.
+- The **Effects** picker runs a room-wide effect program via the Both entity
+  (effect programs are not per-ear).
+
 ## Room-level awareness
 
 Every receiver feeds one shared hub. When it hears commands we did not

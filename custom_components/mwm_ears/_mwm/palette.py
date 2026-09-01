@@ -115,3 +115,25 @@ def nearest_entry(
         candidates.append((_snap_cost(rgb, ref), 1, index))
     preference, code = min(candidates)[1:]
     return ("simple" if preference == 0 else "palette"), code
+
+
+# %%
+# A JSON-serialisable catalogue of every representable ear colour, for the
+# Lovelace card (frontend/mwm-ears-card.js) and any other consumer. Every
+# value a user could pick -- 7 simple one-bit colours plus the 30 measured
+# palette shades except the black/off entry (index 0x1D) -- is listed with
+# its name, RGB triple, and the protocol code/index that selects it. All
+# three side palettes (left/both/right) draw from this same list: each side
+# entity can represent every colour, differing only in which frame is
+# transmitted, which lives in the entity, not here.
+def color_palette() -> list[dict]:
+    out: list[dict] = []
+    for code in sorted(SIMPLE_COLORS):
+        name, rgb = SIMPLE_COLORS[code]
+        out.append({"name": name, "rgb": list(rgb), "kind": "simple", "code": code})
+    for index in sorted(PALETTE):
+        if index == 0x1D:  # black / off, not a pickable shade
+            continue
+        name, rgb = PALETTE[index]
+        out.append({"name": name, "rgb": list(rgb), "kind": "palette", "index": index})
+    return out

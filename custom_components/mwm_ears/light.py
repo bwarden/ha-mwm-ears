@@ -16,7 +16,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.util.color import color_hs_to_RGB
 
-from ._mwm import nearest_entry
+from ._mwm import color_palette, nearest_entry
 from .const import CONF_EMITTER_ENTITY, INTEGRATION_VERSION, DOMAIN, HUB_KEY
 from .ears import (
     BOTH,
@@ -161,6 +161,12 @@ class MwmEarLight(LightEntity):
             "palette_code": dict(self._store.palette_code),
             "suspended_by": self._store.suspended_by,
             "room_state": self._hub.snapshot(),
+            # Catalogue every representable ear colour (name, RGB, kind, and
+            # the protocol code/index), for the Lovelace card and any other
+            # consumer. Identical on all three side entities -- each side can
+            # express every colour; only the transmitted frame differs (held
+            # in light.py / ears.py, not here).
+            "color_palette": color_palette(),
             "note": (
                 "Right-ear picks use verified right-only frames directly; "
                 "left picks fuse the pair into one frame so the right ear "

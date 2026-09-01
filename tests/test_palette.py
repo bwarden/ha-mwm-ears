@@ -6,7 +6,7 @@ import _bootstrap  # noqa: F401  (must precede mwm imports)
 
 import unittest
 
-from mwm.palette import PALETTE, SIMPLE_COLORS, nearest_entry
+from mwm.palette import PALETTE, SIMPLE_COLORS, color_palette, nearest_entry
 
 
 class TableTests(unittest.TestCase):
@@ -88,6 +88,51 @@ class NearestTests(unittest.TestCase):
                 self.assertIn(code, PALETTE)
             else:
                 self.assertIn(code, SIMPLE_COLORS)
+
+
+class ColorPaletteTests(unittest.TestCase):
+    def test_lists_every_representable_colour(self):
+        # 7 simple one-bit colours + the 30 palette shades minus the
+        # black/off entry (0x1D).
+        catalog = color_palette()
+        self.assertEqual(len(catalog), 7 + 29)
+        self.assertEqual(len([c for c in catalog if c["kind"] == "simple"]), 7)
+        self.assertEqual(len([c for c in catalog if c["kind"] == "palette"]), 29)
+
+    def test_simple_entry_shape(self):
+        entry = next(c for c in color_palette() if c["kind"] == "simple")
+        self.assertEqual(len(entry["rgb"]), 3)
+        self.assertIsInstance(entry["name"], str)
+        self.assertIn("code", entry)
+        self.assertNotIn("index", entry)
+
+    def test_palette_entry_shape(self):
+        entry = next(c for c in color_palette() if c["kind"] == "palette")
+        self.assertEqual(len(entry["rgb"]), 3)
+        self.assertIsInstance(entry["name"], str)
+        self.assertIn("index", entry)
+        self.assertNotIn("code", entry)
+
+    def test_rgb_matches_palette_tables(self):
+        catalog = color_palette()
+        for entry in catalog:
+            if entry["kind"] == "simple":
+                self.assertEqual(entry["rgb"], list(SIMPLE_COLORS[entry["code"]][1]))
+            else:
+                self.assertEqual(entry["rgb"], list(PALETTE[entry["index"]][1]))
+
+    def test_excludes_black_off(self):
+        names = [c["name"] for c in color_palette()]
+        self.assertNotIn("black/off", names)
+        palette_names = [
+            c["name"] for c in color_palette() if c["kind"] == "palette"
+        ]
+        self.assertNotIn("black/off", palette_names)
+
+    def test_off_not_offered(self):
+        # 0x1D (off) must never appear as a pickable shade.
+        self.assertNotIn(0x1D, [c.get("index") for c in color_palette()])
+
 
 
 if __name__ == "__main__":
