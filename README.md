@@ -129,15 +129,21 @@ and effect invocation are all handled by the integration).
 
 ### Install
 
-1. Make the JS reachable as a static resource. Either:
-   - copy the bundled `frontend/mwm-ears-card.js` into your HA `www/`
-     directory (e.g. `www/community/mwm_ears/mwm-ears-card.js`), or
-   - have the card served from the integration's install path.
-2. Register it as a Lovelace resource: **Settings → Dashboards → Resources →
-   Add**, then either *URL* mode pointing at
-   `/local/community/mwm_ears/mwm-ears-card.js` (type `module`), or
-   *JavaScript* mode pasting the file contents. *(YAML:* add an entry to
-   `resources:`.*)
+The card ships inside the integration and is served straight from its install
+path, so installing the component is enough — no manual copy into `www/`.
+
+1. Install the integration (HACS, or unpack the release zip into
+   `custom_components/mwm_ears/`) and restart HA.
+2. Register the served card as a Lovelace resource: **Settings → Dashboards →
+   Resources → Add**, in *URL* mode pointing at
+   `/custom_components/mwm_ears/frontend/mwm-ears-card.js` (type `module`).
+   *(YAML:* add the same URL to `resources:`.*)
+
+If static serving is unavailable on your install (the log prints a warning),
+fall back to copying `frontend/mwm-ears-card.js` into your HA `www/`
+directory (e.g. `www/community/mwm_ears/mwm-ears-card.js`) and register the
+resource URL `/local/community/mwm_ears/mwm-ears-card.js` instead. You can
+also use *JavaScript* mode (paste the file contents) in either flow.
 
 ### Configure
 

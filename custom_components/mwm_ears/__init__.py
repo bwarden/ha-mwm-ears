@@ -27,8 +27,10 @@ from __future__ import annotations
 import asyncio
 import logging
 from datetime import timedelta
+from pathlib import Path
 
 from homeassistant.components import infrared
+from homeassistant.components.http import StaticPathConfig
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import STATE_UNAVAILABLE, STATE_UNKNOWN
 from homeassistant.core import HomeAssistant, callback
@@ -131,9 +133,46 @@ def _entity_discovered(hass: HomeAssistant, entity_id: str | None) -> bool:
     return hass.states.get(entity_id) is not None
 
 
+_CARD_FRONTEND_URL = "/custom_components/mwm_ears/frontend"
+_cards_registered = False
+
+
+async def _serve_frontend(hass: HomeAssistant) -> None:
+    """Serve the bundled Lovelace card straight from this package, once.
+
+    Unpacking the integration should be enough to use the card: no manual
+    copy into HA's www/ directory is required. Registration is idempotent,
+    and setup must never fail because serving the card failed -- the README
+    documents the www/ fallback for installs where static registration is
+    unavailable.
+    """
+    global _cards_registered
+    if _cards_registered:
+        return
+    try:
+        frontend_dir = Path(__file__).resolve().parent / "frontend"
+        await hass.http.async_register_static_paths(
+            [
+                StaticPathConfig(
+                    _CARD_FRONTEND_URL, str(frontend_dir), cache_headers=True
+                )
+            ]
+        )
+    except Exception:
+        _LOGGER.warning(
+            "Unable to serve the MWM Ears Lovelace card at %s; copy "
+            "frontend/mwm-ears-card.js into your HA www/ directory instead"
+            " (see python/README.md).", _CARD_FRONTEND_URL,
+        )
+    else:
+        _cards_registered = True
+
+
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     emitter_entity = entry.data.get(CONF_EMITTER_ENTITY)
     receiver_entity = entry.data.get(CONF_RECEIVER_ENTITY)
+
+    await _serve_frontend(hass)
 
     # MQTT-discovered IR entities often appear AFTER our entry is set up at
     # boot.  If the entity has not been discovered at all (state is None),
