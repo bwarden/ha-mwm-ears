@@ -63,8 +63,8 @@ box, which the form suggests together; either half is optional:
   - Effects appear in HA's drop-down (the entity declares EFFECT
     support) and apply to the ears as a whole -- the protocol has no
     per-ear effect invocation. Effect picks invoke verified `48 XX`
-    programs. Bare toggles re-issue the remembered color, defaulting
-    to white.
+    programs (bare, no `24` reset) seeded from the current colours.
+    Bare toggles re-issue the remembered color, defaulting to white.
   - By default the lights follow the room (passive): an overheard FOREIGN
     command (wand or other transmitter) is adopted into the displayed
     state and pauses our repeats until your next action; idle beacons keep
@@ -204,6 +204,25 @@ title: My Ears
 - The **Effects** picker runs a room-wide effect program via the Both entity
   (effect programs are not per-ear).
 
+### Live vs batch (queued) mode
+
+The card has two modes, toggled by a button under the title:
+
+- **Live mode** (default): a swatch click, per-ear Off, or effect pick
+  transmits immediately — the same behaviour as before.
+- **Batch mode**: picks are queued instead of sent; a **Transmit** button
+  sends everything as one `mwm_ears.set_state` call, and **Clear** drops the
+  queue. The mode persists across redraws/restarts via the card `mode: batch`
+  config key. A queued pick is shown in the summary line under the controls
+  (`L=0x62 fx=Color rotation`).
+
+In batch mode the transmit is effect-then-colors: picking an effect sweeps it
+onto the *current* ear colours first, then re-issues the queued colours so
+the running program adopts them. This matches the protocol (park/`48 XX`
+effect frames carry timing, not colour — the program acts on the ear's
+already-active palette) and the rig's verified result (pulse then blue = both
+ears pulsing blue in unison).
+
 The `select_color` action is also available from HA's Actions developer
 tool, scripts, and automations. Its `color` field accepts a catalog name
 (`"lime green"`, `"pure blue"`, case-insensitive, tolerating spelling
@@ -225,7 +244,7 @@ data:
   color: "simple:0x62"      # both ears in one native frame — or use per-side:
   left_color: "off"          #   left ear only
   right_color: "palette:4"   #   right ear only (verified right-only form)
-  effect: Color rotation     # room-wide program, applied last
+  effect: Color rotation     # room-wide program, run first so it adopts the colours
 ```
 
 Fields:
@@ -235,7 +254,12 @@ Fields:
 - `left_color` / `right_color` — per-ear override, each accepting `"off"`,
   a catalog name, or a `"kind:value"` selector; the other ear stays exactly
   as it is (fused/right-only forms, no intermediate flash).
-- `effect` — one of the effect-list programs, run after any color changes.
+- `effect` — one of the effect-list programs. When set, the effect is issued
+  FIRST (as a bare `48 XX` + any `58` cycle companion — no `24` reset, which
+  blanks the ears), then the chosen colours are re-issued so the running
+  program adopts them (rig-verified: pulse then blue = both pulsing blue).
+  Effects run on the ear's current palette; park/`48 XX` frames carry timing,
+  not colour.
 
 Identical picks collapse to one frame, and off-ing an already dark ear is a
 no-op, so the rig is not spammed by re-bursts. This action is the intended
