@@ -29,6 +29,7 @@
  *  the `side`-stamped lights sharing the Both entity's Home Assistant
  *  device. Set them only to override the auto-detection. A side whose
  *  entity is neither configured nor detected renders its palette read-only.
+ *  Set "mode": "batch" to start in batch/queued mode (default is live).
  */
 const MWM_CARD_TAG = "mwm-ears-card";
 const MWM_EDITOR_TAG = "mwm-ears-card-editor";
@@ -48,6 +49,11 @@ class MwmEarsCard extends HTMLElement {
     this._config = { ...config, title: config.title || "MWM Ears" };
     this._lastKey = null;
     this._sides = null;
+    // Live mode transmits each pick immediately; batch mode queues colors and
+    // one effect until the user hits Transmit (which sends effect-then-color
+    // in a single set_state). `mode` survives redraws via the config.
+    this._batch = config.mode === "batch";
+    if (!this._pending) this._pending = { left: null, right: null, both: null, effect: null };
     this._reconcile();
   }
 
@@ -151,6 +157,60 @@ class MwmEarsCard extends HTMLElement {
     this._hass.callService(domain, service, { entity_id: entityId, ...data });
   }
 
+  // Batch mode: queue a color pick for a section (queued, not sent). Side
+  // keys "left_entity"/"right_entity" map straight into the pending object;
+  // "off" means turn that side off in the batch.
+  _queueColor(sideKey, color) {
+    const slot = sideKey === "left_entity" ? "left"
+      : sideKey === "right_entity" ? "right" : "both";
+    this._pending[slot] = color;
+    this._reconcile();
+  }
+
+  _queueEffect(effectName) {
+    this._pending.effect = effectName;
+    this._reconcile();
+  }
+
+  // Human summary of a queued pick (color spec or "off").
+  _pickLabel(v) {
+    if (v == null) return "";
+    if (v === "off") return "off";
+    return v.replace(/^simple:/, "").replace(/^palette:/, "P:");
+  }
+
+  _pendingSummary() {
+    const p = this._pending || {};
+    const parts = [];
+    if (p.left) parts.push("L=" + this._pickLabel(p.left));
+    if (p.right) parts.push("R=" + this._pickLabel(p.right));
+    if (p.both) parts.push("B=" + this._pickLabel(p.both));
+    if (p.effect) parts.push("fx=" + p.effect);
+    return parts.length ? parts.join(" ") : "nothing queued";
+  }
+
+  // Send the whole batch as one set_state: effect first, then colors
+  // (server applies effect-then-color so the running effect adopts them).
+  _transmitBatch() {
+    const p = this._pending || {};
+    const both = p.both;
+    const data = {};
+    if (p.left) data.left_color = p.left === "off" ? "off" : p.left;
+    if (p.right) data.right_color = p.right === "off" ? "off" : p.right;
+    if (both) data.color = both === "off" ? "off" : both;
+    if (p.effect) data.effect = p.effect;
+    if (Object.keys(data).length) {
+      this._call(this._config.entity, "mwm_ears", "set_state", data);
+    }
+    this._pending = { left: null, right: null, both: null, effect: null };
+    this._reconcile();
+  }
+
+  _clearBatch() {
+    this._pending = { left: null, right: null, both: null, effect: null };
+    this._reconcile();
+  }
+
   _rgbOf(state) {
     if (!state) return null;
     const a = state.attributes || {};
@@ -228,7 +288,8 @@ class MwmEarsCard extends HTMLElement {
         const color = c.kind === "simple"
           ? `simple:0x${c.code.toString(16)}`
           : `palette:${c.index}`;
-        this._call(entityId, "mwm_ears", "select_color", { color });
+        if (this._batch) this._queueColor(sideKey, color);
+        else this._call(entityId, "mwm_ears", "select_color", { color });
       });
       grid.appendChild(btn);
     }
@@ -245,7 +306,8 @@ class MwmEarsCard extends HTMLElement {
       offSpan.textContent = "Off";
       offBtn.appendChild(offSpan);
       offBtn.addEventListener("click", () => {
-        this._call(entityId, "light", "turn_off", {});
+        if (this._batch) this._queueColor(sideKey, "off");
+        else this._call(entityId, "light", "turn_off", {});
       });
       grid.appendChild(offBtn);
     }
@@ -319,7 +381,8 @@ class MwmEarsCard extends HTMLElement {
     }
     select.addEventListener("change", () => {
       if (select.value) {
-        this._call(this._config.entity, "light", "turn_on", { effect: select.value });
+        if (this._batch) this._queueEffect(select.value);
+        else this._call(this._config.entity, "light", "turn_on", { effect: select.value });
         select.value = "";
       }
     });
@@ -344,6 +407,61 @@ class MwmEarsCard extends HTMLElement {
       section.appendChild(n);
     }
     return section;
+  }
+
+  _buildModeRow() {
+    const row = document.createElement("div");
+    row.className = "mode-row";
+
+    const label = document.createElement("span");
+    label.className = "mode-label";
+    label.textContent = this._batch ? "Batch mode" : "Live mode";
+    row.appendChild(label);
+
+    const toggle = document.createElement("button");
+    toggle.className = "mode-toggle";
+    toggle.textContent = this._batch ? "Switch to live" : "Queue picks (batch)";
+    toggle.addEventListener("click", () => {
+      this._batch = !this._batch;
+      if (this._batch && !this._pending) this._pending = { left: null, right: null, both: null, effect: null };
+      // Persist the mode so redraws/restarts keep it.
+      const cfg = { ...this._config };
+      if (this._batch) cfg.mode = "batch";
+      else { delete cfg.mode; this._pending = null; }
+      this._config = cfg;
+      this._reconcile();
+    });
+    row.appendChild(toggle);
+
+    return row;
+  }
+
+  _buildBatchBar() {
+    const bar = document.createElement("div");
+    bar.className = "batch-bar";
+
+    const summary = document.createElement("span");
+    summary.className = "batch-summary";
+    summary.textContent = this._pendingSummary();
+    bar.appendChild(summary);
+
+    const transmit = document.createElement("button");
+    transmit.className = "batch-transmit";
+    transmit.textContent = "Transmit";
+    const p = this._pending || {};
+    const ready = (p.left || p.right || p.both || p.effect);
+    transmit.disabled = !ready;
+    transmit.addEventListener("click", () => this._transmitBatch());
+    bar.appendChild(transmit);
+
+    const clear = document.createElement("button");
+    clear.className = "batch-clear";
+    clear.textContent = "Clear";
+    clear.disabled = !ready;
+    clear.addEventListener("click", () => this._clearBatch());
+    bar.appendChild(clear);
+
+    return bar;
   }
 
   _reconcile() {
@@ -379,6 +497,19 @@ class MwmEarsCard extends HTMLElement {
       .effects-row { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; }
       .effects select { flex: 1; }
       .effects button { margin-top: 4px; }
+      .mode-row { display: flex; align-items: center; gap: 8px; margin: 0 0 12px; }
+      .mode-label { font-size: .75rem; font-weight: 600; text-transform: uppercase;
+                    letter-spacing: .03em; color: var(--secondary-text-color,#777); }
+      .mode-toggle, .batch-transmit, .batch-clear { font-size: .8rem; cursor: pointer;
+                    border: 1px solid var(--divider-color,rgba(0,0,0,.2));
+                    background: var(--card-background-color,#fff);
+                    color: var(--primary-text-color,#212121); border-radius: 4px;
+                    padding: 3px 10px; }
+      .mode-toggle:hover, .batch-transmit:hover, .batch-clear:hover { background: var(--ha-card-background,#f5f5f5); }
+      .batch-transmit:disabled, .batch-clear:disabled { opacity: .5; cursor: default; }
+      .batch-bar { display: flex; align-items: center; gap: 8px; margin: 0 0 12px; }
+      .batch-summary { flex: 1; font-size: .75rem; color: var(--secondary-text-color,#777);
+                    font-family: var(--paper-font-code_-_font-family,monospace); }
     `;
     root.appendChild(style);
 
@@ -390,6 +521,8 @@ class MwmEarsCard extends HTMLElement {
     title.className = "title";
     title.textContent = this._config.title;
     card.appendChild(title);
+
+    card.appendChild(this._buildModeRow());
 
     if (!this._hass) {
       const waiting = document.createElement("div");
@@ -418,6 +551,7 @@ class MwmEarsCard extends HTMLElement {
       "Right picks use the verified right-only form directly.", bothState,
       { enabled: !!this._sides.right }));
     card.appendChild(this._buildEffects(bothState));
+    if (this._batch) card.appendChild(this._buildBatchBar());
   }
 }
 
