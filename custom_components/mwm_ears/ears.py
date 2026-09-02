@@ -95,6 +95,16 @@ _LOGGER = logging.getLogger(__name__)
 
 RIGHT_ONLY_BASE = 0x68
 
+# Effect programs that need a `58` cycle-timer companion in the SAME phrase
+# to run at all (docs/mwm-show-protocol.md section 4): `48 03`/`48 04` are
+# the rig-verified pulse pair that "require `58 F0`" -- without it they do
+# nothing or degrade.  The palette of `58 tt` is the ~100 ms/count cycle
+# (> `58 F0` = special fast pulse), driven by the companion byte below.
+_EFFECT_CYCLE_COMPANION: dict[int, int] = {
+    0x03: 0xF0,  # slow even pulse
+    0x04: 0xF0,  # pulse
+}
+
 
 class EarPairState:
     """Desired state of one transmitter's ear pair.
@@ -365,8 +375,38 @@ class EarPairState:
             return ("palette", pp & 0x7F)
         return ("simple", self.codes[side])
 
+    def _record_color(self, side: str, pick: tuple[str, int]) -> None:
+        """Record a color pick into the pair's held state (no transmission).
+
+        ``pick`` is ``("simple", code)`` or ``("palette", index)``, with
+        ``code == EAR_OFF_CODE`` meaning off.  Used by `apply_effect` to keep
+        HA state matching the colors an effect was seeded with.
+        """
+        kind, value = pick
+        if value == EAR_OFF_CODE:
+            self.codes[side] = EAR_OFF_CODE
+            self.palette_code[side] = None
+            self.desired_on[side] = False
+            return
+        if kind == "palette":
+            self.palette_code[side] = value
+            return
+        self.codes[side] = value
+        self.palette_code[side] = None
+        self.last_simple[side] = value
+        self.desired_on[side] = True
+
     def _state_frames(self) -> list[bytes]:
-        """Verified-form frames expressing the current pair state.
+        """Frames expressing the current pair state (see `_color_frames_for`)."""
+        return self._color_frames_for()
+
+    def _color_frames_for(
+        self,
+        left: tuple[str, int] | None = None,
+        right: tuple[str, int] | None = None,
+    ) -> list[bytes]:
+        """Verified-form color frames for an explicit pair, or the current
+        ear state when a side is omitted.
 
         Equal pairs use the canonical both-ears form (`90 6X` simple,
         `91 0E pp` palette).  When left and right differ, a single *fused*
@@ -379,14 +419,15 @@ class EarPairState:
             ``92 0E L 6R ..``        palette left + simple right
             ``93 0E L 0E R|80 ..``   palette left + palette right
 
-        Multi-byte phrases run opcodes sequentially against both ears, so a
-        both-ear opcode followed by a right-only opcode achieves per-side
-        control in one burst.  This is what lets a left-ear color pick leave
-        the right ear untouched in a single transmission (no intermediate
-        flash, no clobbering a simple right with a both-ears palette frame).
+        A palette pick is ``("palette", index)``; a simple ``("simple",
+        code)``, with code ``EAR_OFF_CODE`` meaning "off".  Multi-byte
+        phrases run opcodes sequentially against both ears, so a both-ear
+        opcode followed by a right-only opcode achieves per-side control in
+        one burst.  This is what lets a left-ear color pick leave the right
+        ear untouched in a single transmission.
         """
-        left = self._ear_color(LEFT)
-        right = self._ear_color(RIGHT)
+        left = left or self._ear_color(LEFT)
+        right = right or self._ear_color(RIGHT)
         if left == right:
             if left[0] == "palette":
                 return [build_frame([0x0E, left[1]])]
@@ -632,16 +673,59 @@ class EarPairState:
         self.resume()
         await self._send_state(BURST_REPEATS)
 
-    async def apply_effect(self, index: int, label: str) -> None:
-        # 24 lets an invocation take effect while a built-in program runs;
-        # park captures show bare 48 XX phrases working as well.
+    async def apply_effect(
+        self,
+        index: int,
+        label: str,
+        left: tuple[str, int] | None = None,
+        right: tuple[str, int] | None = None,
+    ) -> None:
+        """Run an effect program, seeded with the current (or given) color.
+
+        Real show effects are sent WITHOUT the `24` reset that this method
+        used to prepend -- park captures and rig tests (2026-09-02) show `24`
+        blanks or halves the ears (e.g. yellow-left/blank-right) whereas a
+        bare `48 XX` acts on the current color cleanly.  So an effect is
+        issued as its own phrase (plus any required `58` cycle companion
+        from `_EFFECT_CYCLE_COMPANION`), FOLLOWED by the color frames.
+
+        Order matters: the effect program is started first, THEN the color
+        is re-issued so the running effect adopts it (rig: pulse then blue =
+        both ears pulsing blue in unison).  Sending the color before the
+        effect instead splits the ears (white/red) or is ignored -- exactly
+        the "picking an event blanks the ears" failure this fixes.
+
+        The ears' A-B-A' bundles do NOT carry colors: A and A' are the same
+        phrase, B is a companion timing/parameter block for the effect
+        (docs/mwm-show-protocol.md section 6) -- effects run on the ear's
+        current palette. Re-issuing the current color here is an HA-native
+        way to seed the effect, consistent with the show. The bare `48 XX`
+        (plus any `58`/`D0` modifiers) is the triggered effect phrase; the
+        `24`-led companion template is not required for a single home send.
+        """
+        # Capture the current colors BEFORE running_effect/palette_code are
+        # cleared, so the effect can be seeded with what is on screen now.
+        color_frames = self._color_frames_for(left=left, right=right)
+
         self.running_effect = label
         self.palette_code = {LEFT: None, RIGHT: None}
         self.desired_on = {LEFT: True, RIGHT: True}
+        # If explicit picks were given (batch mode), record them as the pair's
+        # colors so HA reflects what the effect adopted; the effect program
+        # owns the display while running, but these are the held colors.
+        if left is not None:
+            self._record_color(LEFT, left)
+        if right is not None:
+            self._record_color(RIGHT, right)
         self.resume()
-        hold = build_frame([0x24, 0x48, index])
-        self._hold_frames = [hold]
-        await self._send(hold, BURST_REPEATS)
+
+        content = [0x48, index]
+        companion = _EFFECT_CYCLE_COMPANION.get(index)
+        if companion is not None:
+            content += [0x58, companion]
+        frames = [build_frame(content), *color_frames]
+        self._hold_frames = frames
+        await self._send_group(frames, BURST_REPEATS)
 
     async def turn_on_side(self, side: str) -> int:
         """Light one ear with its remembered simple color.
@@ -712,6 +796,13 @@ class EarPairState:
         if effect is None and left is None and right is None:
             return
 
+        if effect is not None:
+            # Effect FIRST, then the colors -- the running effect adopts the
+            # just-issued color (rig-verified: pulse then blue = both ears
+            # pulsing blue).  Reverse order splits the ears or is ignored.
+            await self.apply_effect(*effect, left=left, right=right)
+            return
+
         if left is not None and right is not None:
             if left == right:
                 await self._send_both_pick(left)
@@ -722,9 +813,6 @@ class EarPairState:
             await self._send_side_pick(LEFT, left)
         elif right is not None:
             await self._send_side_pick(RIGHT, right)
-
-        if effect is not None:
-            await self.apply_effect(*effect)
 
     async def _send_both_pick(self, pick: tuple[str, int]) -> None:
         """Send one pick to both ears in the protocol's native both frame."""

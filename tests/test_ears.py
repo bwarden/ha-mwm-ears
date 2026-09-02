@@ -77,11 +77,32 @@ class ApplyTests(unittest.TestCase):
         self.assertEqual(frame[:3], bytes([0x91, 0x0E, 0x0E]))
         self.assertEqual(frame.hex().upper(), "910E0E40")
 
-    def test_effect_invoke_carries_24_prefix(self):
+    def test_effect_invoke_starts_with_current_color(self):
         h = Harness()
         run(h.pair.apply_effect(0x84, "Strobe flash"))
-        frame = bytes.fromhex(h.calls[0][0])
-        self.assertEqual(list(frame[1:-1]), [0x24, 0x48, 0x84])
+        # Effect frame first, WITHOUT the 24 reset (which blanks the ears),
+        # then the current pair color re-issued so the effect adopts it.
+        effect = bytes.fromhex(h.calls[0][0])
+        self.assertEqual(list(effect[1:-1]), [0x48, 0x84])
+        # A fresh pair defaults to both-ears-off (0x60), sent right after.
+        color = bytes.fromhex(h.calls[1][0])
+        self.assertEqual(list(color[1:-1]), [0x60])
+
+    def test_effect_invoke_seeds_explicit_color(self):
+        h = Harness()
+        run(h.pair.apply_effect(
+            0x04, "Pulse",
+            left=("simple", 0x65), right=("simple", 0x65),
+        ))
+        # Pulse needs its 58 F0 cycle-timer companion.
+        effect = bytes.fromhex(h.calls[0][0])
+        self.assertEqual(list(effect[1:-1]), [0x48, 0x04, 0x58, 0xF0])
+        # Explicit seed color (both ears) sent right after the effect.
+        color = bytes.fromhex(h.calls[1][0])
+        self.assertEqual(list(color[1:-1]), [0x65])
+        # And recorded so HA reflects it.
+        self.assertEqual(h.pair.codes["left"], 0x65)
+        self.assertEqual(h.pair.codes["right"], 0x65)
 
 
 class TurnOnRestoreTests(unittest.TestCase):
@@ -416,15 +437,20 @@ class EnforcementTests(unittest.TestCase):
 
     def test_enforce_reasserts_held_effect_frames(self):
         """Effect programs are held and re-asserted frame-for-frame too:
-        the 24-prefixed invocation must replay, not a simple color."""
+        effect + current-color replay, not a simple color."""
         h = HubHarness()
         run(h.pair.apply_effect(0x84, "Strobe flash"))
         h.pair.set_enforce(True)
         h.calls.clear()
         run(h.pair.enforce_tick())
+        # _hold_frames = [effect_frame, color_frame] (no 24 prefix);
+        # both replay via _send_group, one per frame.
         self.assertEqual(
             h.calls,
-            [(build_frame([0x24, 0x48, 0x84]).hex().upper(), 0)],
+            [
+                (build_frame([0x48, 0x84]).hex().upper(), 0),
+                (build_frame([0x60]).hex().upper(), 0),
+            ],
         )
 
     def test_enforce_fresh_restart_defaults_to_off(self):
@@ -739,25 +765,6 @@ class OffSemanticsTests(unittest.TestCase):
         frame = bytes.fromhex(h.calls[-1][0])
         self.assertEqual(bytes(frame), build_frame([0x60]))
         self.assertEqual(frame.hex().upper(), "9060A6")
-
-    def test_turning_off_already_dark_ear_sends_nothing(self):
-        # The standalone `24` blacks the ears for seconds (flow control);
-        # rig 2026-08-23 proved color frames land without it, so only
-        # effect invocation (doc: required to escape running programs)
-        # still leads with it.
-        h = Harness()
-        run(h.pair.apply_simple("left", 0x61))
-        self.assertEqual(bytes.fromhex(h.calls[0][0])[1], 0x61)
-        run(h.pair.apply_palette(0x03))
-        idx = next(i for i, c in enumerate(h.calls)
-                   if c[0].startswith("91"))
-        self.assertNotEqual(bytes.fromhex(h.calls[idx][0])[1], 0x24)
-        before = len(h.calls)
-        run(h.pair.turn_off_side("left"))
-        for hex_frame, _rc in h.calls[before:]:
-            self.assertNotEqual(bytes.fromhex(hex_frame)[1], 0x24)
-        run(h.pair.apply_effect(0x84, "Strobe flash"))
-        self.assertEqual(bytes.fromhex(h.calls[-1][0])[1], 0x24)
 
     def test_turning_off_already_dark_ear_sends_nothing(self):
         h = Harness()
