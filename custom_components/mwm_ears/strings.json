@@ -30,6 +30,30 @@
     }
   },
   "services": {
+    "set_state": {
+      "name": "Set ears state",
+      "description": "Native pair-level control for automations, richer than light.turn_on: sets both ears' exact colors (each ear independently or a single native both pick) plus a room-wide effect in one call. Target any of the pair's lights or the mwm_ears device.",
+      "fields": {
+        "color": {
+          "name": "Both ears color",
+          "description": "Applies to both ears at once (native both form, one transmission) when left_color/right_color are unset: \"off\", a catalog color name, or a \"kind:value\" selector.",
+          "example": "simple:0x61"
+        },
+        "left_color": {
+          "name": "Left ear color",
+          "description": "Exact color for the left ear only (overrides `color` for this ear), leaving the right ear exactly as it is: \"off\", a catalog color name, or a \"kind:value\" selector."
+        },
+        "right_color": {
+          "name": "Right ear color",
+          "description": "Exact color for the right ear only (overrides `color` for this ear), using the verified right-only forms: \"off\", a catalog color name, or a \"kind:value\" selector."
+        },
+        "effect": {
+          "name": "Effect",
+          "description": "Room-wide effect program run after any color changes. Effects are not per-ear.",
+          "example": "Color rotation"
+        }
+      }
+    },
     "select_color": {
       "name": "Select exact color",
       "description": "Sends one exact catalog color to the ears, bypassing color-wheel snapping so near-identical shades (simple 0x61 blue vs palette 0x04 pure blue) arrive as distinct commands. Takes a catalog name (\"lime green\", \"pure blue\") or a selector (\"simple:0x61\", \"palette:4\").",

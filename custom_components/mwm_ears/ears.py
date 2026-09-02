@@ -681,6 +681,71 @@ class EarPairState:
             return
         await self._send_state(BURST_REPEATS)
 
+    async def apply_state(
+        self,
+        left: tuple[str, int] | None = None,
+        right: tuple[str, int] | None = None,
+        *,
+        both: tuple[str, int] | None = None,
+        effect: tuple[int, str] | None = None,
+    ) -> None:
+        """Native pair-level state: set both ears' colors + effect in one call.
+
+        Automation-facing (mwm_ears.set_state), richer than light.turn_on:
+        each ear can take a different exact color, or one pick can address
+        both ears in the protocol's native both form, with a room-wide
+        effect applied last.  Each color arg is an already-parsed pick --
+        ``("simple", code)`` or ``("palette", index)``, with code/index of
+        EAR_OFF_CODE meaning "off".  ``both`` is the both-ears shortcut (a
+        per-side ``left``/``right`` wins over it for that ear).
+
+        Transmissions are minimized: identical picks collapse to one native
+        both frame; per-ear picks reuse the fused-both/right-only forms so
+        the other ear keeps its own color with no flash; off-ing an already
+        dark ear is a no-op.  Nothing is transmitted when no field is set.
+        """
+        if both is not None:
+            if left is None:
+                left = both
+            if right is None:
+                right = both
+        if effect is None and left is None and right is None:
+            return
+
+        if left is not None and right is not None:
+            if left == right:
+                await self._send_both_pick(left)
+            else:
+                await self._send_side_pick(LEFT, left)
+                await self._send_side_pick(RIGHT, right)
+        elif left is not None:
+            await self._send_side_pick(LEFT, left)
+        elif right is not None:
+            await self._send_side_pick(RIGHT, right)
+
+        if effect is not None:
+            await self.apply_effect(*effect)
+
+    async def _send_both_pick(self, pick: tuple[str, int]) -> None:
+        """Send one pick to both ears in the protocol's native both frame."""
+        kind, code = pick
+        if code == EAR_OFF_CODE:
+            await self.apply_simple_both(EAR_OFF_CODE)
+        elif kind == "simple":
+            await self.apply_simple_both(code)
+        else:
+            await self.apply_palette(code)
+
+    async def _send_side_pick(self, side: str, pick: tuple[str, int]) -> None:
+        """Send one pick to a single ear, leaving the other exactly as it is."""
+        kind, code = pick
+        if code == EAR_OFF_CODE:
+            await self.turn_off_side(side)
+        elif kind == "simple":
+            await self.apply_simple(side, code)
+        else:
+            await self.apply_palette(code, side=side)
+
 
 
 def extract_timing_candidates(payload) -> list[list[int]]:

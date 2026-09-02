@@ -7,9 +7,16 @@ switched to a {"pair": ..., "rx": ...} dict) shipped despite a green
 suite. These greps pin the contract instead.
 """
 
+import json
 import pathlib
 import re
 import unittest
+
+import yaml
+
+import _bootstrap  # noqa: F401  (must precede mwm imports)
+
+from mwm import LIGHT_EFFECTS
 
 _COMPONENT = (
     pathlib.Path(__file__).resolve().parents[1]
@@ -176,6 +183,45 @@ class VersionContract(unittest.TestCase):
         )
         self.assertIsNotNone(match, "const.py lost INTEGRATION_VERSION")
         self.assertEqual(manifest.get("version"), match.group(1))
+
+
+class SetStateServiceContract(unittest.TestCase):
+    """mwm_ears.set_state must be a complete, documented automation surface.
+
+    light.py cannot be imported here (homeassistant is absent), so these
+    tests pin its contract against services.yaml and the shared catalog.
+    """
+
+    def _services(self) -> dict:
+        return yaml.safe_load(_read("services.yaml"))
+
+    def test_set_state_declared_with_all_fields(self):
+        svc = self._services()["set_state"]
+        self.assertIsNotNone(svc.get("target"))
+        for field in ("color", "left_color", "right_color", "effect"):
+            self.assertIn(field, svc.get("fields", {}), f"set_state lost {field!r}")
+
+    def test_effect_selector_matches_catalog(self):
+        svc = self._services()["set_state"]
+        options = svc["fields"]["effect"]["selector"]["select"]["options"]
+        self.assertEqual(sorted(options), sorted(LIGHT_EFFECTS))
+
+    def test_effect_catalog_has_no_duplicate_indices(self):
+        indices = list(LIGHT_EFFECTS.values())
+        self.assertEqual(len(indices), len(set(indices)))
+
+    def test_light_platform_uses_the_shared_catalog(self):
+        light = _read("light.py")
+        self.assertNotIn("LIGHT_EFFECTS: dict[str, int] = {", light)
+        self.assertIn("LIGHT_EFFECTS", light)
+        self.assertIn('hass.services.async_register(DOMAIN, "set_state"', light)
+        self.assertIn('hass.services.async_register(DOMAIN, "select_color"', light)
+
+    def test_strings_declare_set_state_fields(self):
+        strings = json.loads(_read("strings.json"))
+        service = strings["services"]["set_state"]
+        for field in ("color", "left_color", "right_color", "effect"):
+            self.assertIn(field, service["fields"], f"strings.json lost {field!r}")
 
 
 class EffectsSelectorContract(unittest.TestCase):

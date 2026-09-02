@@ -49,6 +49,27 @@ EFFECT_LABELS: dict[int, str] = {
     0x86: "fade up",
 }
 
+# Curated effect catalog surfaced to Home Assistant (light.py effect_list,
+# the set_state action's effect selector): HA-facing labels mapped to the
+# stored effect program indices.  A superset of EFFECT_LABELS -- the added
+# demo-mode indices (0x00..0x1F plus 0x82..0x86) are rig-verified entry
+# points into the built-in show programs (docs/mwm-show-protocol.md
+# section 4, [T]hread/[P]ark verified).
+LIGHT_EFFECTS: dict[str, int] = {
+    "Fade out": 0x85,
+    "Fade up": 0x86,
+    "Slow even pulse": 0x03,
+    "Pulse": 0x04,
+    "Strobe flash": 0x84,
+    "Hard transitions": 0x82,
+    "Crossfade transitions": 0x83,
+    "Color rotation": 0x11,
+    "Flashing sequence": 0x0F,
+    "Quick four-color rotation": 0x08,
+    "Random effect": 0x00,
+    "Blackout": 0x1F,
+}
+
 
 def effect_label(index: int) -> str:
     """Human name for an invoked effect index, labelled or not."""

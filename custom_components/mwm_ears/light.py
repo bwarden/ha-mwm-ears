@@ -19,6 +19,7 @@ from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.util.color import color_hs_to_RGB
 
 from ._mwm import (
+    LIGHT_EFFECTS,
     PALETTE,
     SIMPLE_COLORS,
     color_palette,
@@ -37,29 +38,12 @@ from .ears import (
 
 _LOGGER = logging.getLogger(__name__)
 
-# Curated effect catalog (docs/mwm-show-protocol.md section 4): labels shown
-# in HA mapped to stored effect program indices.
-LIGHT_EFFECTS: dict[str, int] = {
-    "Fade out": 0x85,
-    "Fade up": 0x86,
-    "Slow even pulse": 0x03,
-    "Pulse": 0x04,
-    "Strobe flash": 0x84,
-    "Hard transitions": 0x82,
-    "Crossfade transitions": 0x83,
-    "Color rotation": 0x11,
-    "Flashing sequence": 0x0F,
-    "Quick four-color rotation": 0x08,
-    "Random effect": 0x00,
-    "Blackout": 0x1F,
-}
-
 _SIDE_NAMES = {BOTH: "Both", LEFT: "Left", RIGHT: "Right"}
 
-# Live light instances by entity id, for the domain's select_color service
-# (exact-command color picks that bypass color-wheel snapping).
+# Live light instances by entity id, for the domain's exact-color services
+# (exact-command picks that bypass color-wheel snapping).
 _BY_ENTITY_ID: dict[str, "MwmEarLight"] = {}
-_select_service_registered = False
+_services_registered = False
 
 
 async def _select_color_service(call: ServiceCall) -> None:
@@ -75,6 +59,62 @@ async def _select_color_service(call: ServiceCall) -> None:
     await light.async_select_color(color)
 
 
+async def _set_state_service(call: ServiceCall) -> None:
+    """Handle mwm_ears.set_state: native pair-level control for automations.
+
+    Richer than light.turn_on: one action sets both ears' exact colors --
+    independently or as a native both pick, each "off"-able -- and runs a
+    room-wide effect. Target any of the pair's lights or the mwm_ears device
+    (target expansion resolves to the shared EarPairState). Lays the pair
+    ground for later timing/sync/countdown fields without further entry
+    plumbing.
+    """
+    target = call.data.get(ATTR_ENTITY_ID)
+    ids = target if isinstance(target, (list, tuple)) else [target]
+    light = None
+    for entity_id in ids:
+        if entity_id in _BY_ENTITY_ID:
+            light = _BY_ENTITY_ID[entity_id]
+            break
+    if light is None:
+        raise ServiceValidationError("no MWM Ears light entity targeted")
+    store: EarPairState = light._store
+
+    left = _parse_state_pick(call.data.get("left_color"))
+    right = _parse_state_pick(call.data.get("right_color"))
+    both = _parse_state_pick(call.data.get("color"))
+
+    effect = None
+    effect_spec = call.data.get("effect")
+    if effect_spec:
+        index = LIGHT_EFFECTS.get(effect_spec)
+        if index is None:
+            raise ServiceValidationError(f"unknown effect: {effect_spec!r}")
+        effect = (index, effect_spec)
+
+    await store.apply_state(left=left, right=right, both=both, effect=effect)
+
+
+def _parse_state_pick(spec) -> tuple[str, int] | None:
+    """Resolve a set_state color field to a parsed pick.
+
+    Accepts the same values as ``parse_color`` plus ``"off"``; None (field
+    unset) means "don't touch this ear". Raises ServiceValidationError for
+    anything malformed.
+    """
+    if spec is None:
+        return None
+    if not isinstance(spec, str):
+        raise ServiceValidationError("'color' fields must be a name, selector, or \"off\"")
+    text = spec.strip()
+    if text.lower() == "off":
+        return ("simple", EAR_OFF_CODE)
+    try:
+        return parse_color(text)
+    except ValueError as err:
+        raise ServiceValidationError(str(err)) from err
+
+
 async def async_setup_entry(
     hass: HomeAssistant,
     entry: ConfigEntry,
@@ -87,10 +127,11 @@ async def async_setup_entry(
     if not entry.data.get(CONF_EMITTER_ENTITY):
         return  # this instance has no emitter half
 
-    global _select_service_registered
-    if not _select_service_registered:
+    global _services_registered
+    if not _services_registered:
         hass.services.async_register(DOMAIN, "select_color", _select_color_service)
-        _select_service_registered = True
+        hass.services.async_register(DOMAIN, "set_state", _set_state_service)
+        _services_registered = True
 
     async_add_entities(
         [

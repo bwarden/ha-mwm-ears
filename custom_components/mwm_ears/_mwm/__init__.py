@@ -53,6 +53,7 @@ from .timings import decode_timings
 from .command import MwmCommand
 from .decode import (
     EFFECT_LABELS,
+    LIGHT_EFFECTS,
     EarStateTracker,
     describe_55aa,
     describe_content,
@@ -88,6 +89,7 @@ __all__ = [
     "parse_color",
     "color_palette",
     "EFFECT_LABELS",
+    "LIGHT_EFFECTS",
     "EarStateTracker",
     "describe_55aa",
     "describe_content",

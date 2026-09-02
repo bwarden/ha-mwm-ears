@@ -191,6 +191,9 @@ title: My Ears
   distinct protocol commands (simple `0x61` blue vs palette `0x04` pure
   blue) can be sent and tested individually. The active swatch is matched by
   the entity's `color_identity` attribute (kind + code/index), never by RGB.
+- Each ear section ends with an **Off** circle that turns just that ear off
+  (the other ear keeps its color); it is highlighted while that ear is off.
+  The global On / Off row covers the whole pair.
 - Picking from the HA color wheel still snaps to the nearest shade, and
   palette shades that look identical to a one-bit simple color (e.g. lime
   green → simple green) resolve to the simple opcode, whose right-only
@@ -207,6 +210,36 @@ tool, scripts, and automations. Its `color` field accepts a catalog name
 variants such as `gray`/`grey`) or a `"kind:value"` selector
 (`"simple:0x61"`, `"palette:4"`, or `"palette:white"`), and targets any of
 the three side entities.
+
+### Native automation action: `mwm_ears.set_state`
+
+`light.turn_on` can only express one ear at a time and cannot mix a palette
+shade with a simple color in one action. For automations, `mwm_ears.set_state`
+operates on the whole pair:
+
+```yaml
+action: mwm_ears.set_state
+target:
+  entity_id: light.mwm_ears_office_ears   # the Both entity (or mwm_ears device)
+data:
+  color: "simple:0x62"      # both ears in one native frame — or use per-side:
+  left_color: "off"          #   left ear only
+  right_color: "palette:4"   #   right ear only (verified right-only form)
+  effect: Color rotation     # room-wide program, applied last
+```
+
+Fields:
+
+- `color` — applies to both ears at once (protocol's native both form,
+  a single transmission) when no side field overrides it.
+- `left_color` / `right_color` — per-ear override, each accepting `"off"`,
+  a catalog name, or a `"kind:value"` selector; the other ear stays exactly
+  as it is (fused/right-only forms, no intermediate flash).
+- `effect` — one of the effect-list programs, run after any color changes.
+
+Identical picks collapse to one frame, and off-ing an already dark ear is a
+no-op, so the rig is not spammed by re-bursts. This action is the intended
+entry point for later timing/sync/countdown fields.
 
 ## Room-level awareness
 

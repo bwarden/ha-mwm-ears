@@ -78,7 +78,15 @@ class MwmEarsCard extends HTMLElement {
                  this._sides && this._sides.right].filter(Boolean);
     return ids.map((id) => {
       const s = hass && hass.states && hass.states[id];
-      return s ? `${s.state}:${(s.attributes || {}).rgb_color}:${(s.attributes || {}).color_identity}:${(s.attributes || {}).effect}` : "none";
+      if (!s) return "none";
+      const a = s.attributes || {};
+      // color_identity is a {kind, code|index} OBJECT: template coercion
+      // would collapse every identity to the same "[object Object]" and miss
+      // a palette->simple switch whose RGB round-trips identically (pure
+      // green palette 25 vs simple green 0x62 both come back 0,255,0).
+      const identity = a.color_identity ? JSON.stringify(a.color_identity) : "";
+      const rgb = Array.isArray(a.rgb_color) ? a.rgb_color.join(",") : "";
+      return `${s.state}:${rgb}:${identity}:${a.effect}`;
     }).join("|");
   }
 
@@ -225,6 +233,23 @@ class MwmEarsCard extends HTMLElement {
       grid.appendChild(btn);
     }
 
+    // Per-ear sections get an "Off" circle: turns JUST this ear off via the
+    // light entity's turn_off (server: a right-only/form or both+restore
+    // composition, leaving the other ear untouched), highlighted when the
+    // ear is off. The Both section leaves off to the global On/Off row.
+    if (sideKey !== "entity") {
+      const offBtn = document.createElement("button");
+      offBtn.className = "swatch off-ear" + (state && state.state === "off" ? " active" : "");
+      offBtn.title = "Turn this ear off";
+      const offSpan = document.createElement("span");
+      offSpan.textContent = "Off";
+      offBtn.appendChild(offSpan);
+      offBtn.addEventListener("click", () => {
+        this._call(entityId, "light", "turn_off", {});
+      });
+      grid.appendChild(offBtn);
+    }
+
     section.appendChild(grid);
     if (subtitle) {
       const n = document.createElement("div");
@@ -348,6 +373,8 @@ class MwmEarsCard extends HTMLElement {
       .swatch.on span, .swatch.off span { color: #333; }
       .swatch.off { background: #222; }
       .swatch.off span { color: #fff; }
+      .swatch.off-ear { background: radial-gradient(circle at 50% 42%, #666, #171717 72%); }
+      .swatch.off-ear span { color: #eee; }
       .note { font-size: .75rem; color: var(--secondary-text-color,#777); margin-top: 6px; }
       .effects-row { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; }
       .effects select { flex: 1; }

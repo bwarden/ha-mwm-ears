@@ -921,5 +921,88 @@ class SidePickedTests(unittest.TestCase):
         self.assertIsNone(h.pair.side_picked("left"))
 
 
+class ApplyStateTests(unittest.TestCase):
+    """mwm_ears.set_state (apply_state) pair-level control."""
+
+    def setUp(self):
+        self.h = Harness()
+
+    def _set(self, left_code, right_code):
+        p = self.h.pair
+        p.codes = {"left": left_code, "right": right_code}
+        p.desired_on = {
+            "left": left_code != ears.EAR_OFF_CODE,
+            "right": right_code != ears.EAR_OFF_CODE,
+        }
+        p.palette_code = {"left": None, "right": None}
+
+    def test_noop_when_nothing_set(self):
+        run(self.h.pair.apply_state())
+        self.assertEqual(self.h.calls, [])
+
+    def test_both_shortcut_uses_native_both_form(self):
+        p = self.h.pair
+        run(p.apply_state(both=("simple", 0x62)))
+        self.assertEqual(p.codes, {"left": 0x62, "right": 0x62})
+        self.assertTrue(p.desired_on["left"] and p.desired_on["right"])
+        self.assertIsNone(p.palette_code["left"])
+        # Single composed group, not two per-side bursts.
+        self.assertEqual(len(self.h.calls), ears.BURST_REPEATS + 1)
+
+    def test_both_off_collapses_to_single_command(self):
+        p = self.h.pair
+        self._set(0x64, 0x67)
+        run(p.apply_state(both=("simple", ears.EAR_OFF_CODE)))
+        self.assertFalse(p.desired_on["left"] or p.desired_on["right"])
+        self.assertEqual(p.codes, {"left": ears.EAR_OFF_CODE, "right": ears.EAR_OFF_CODE})
+
+    def test_side_override_wins_over_color_shortcut(self):
+        p = self.h.pair
+        run(p.apply_state(both=("simple", 0x62), left=("simple", 0x66)))
+        self.assertEqual(p.codes["left"], 0x66)
+        self.assertEqual(p.codes["right"], 0x62)
+
+    def test_per_side_left_leaves_right_untouched(self):
+        p = self.h.pair
+        self._set(0x64, 0x67)
+        run(p.apply_state(left=("simple", 0x66)))
+        self.assertEqual(p.codes["left"], 0x66)
+        self.assertEqual(p.codes["right"], 0x67)
+        self.assertEqual(p.palette_code, {"left": None, "right": None})
+
+    def test_identical_separate_picks_use_one_native_frame(self):
+        p = self.h.pair
+        self._set(ears.EAR_OFF_CODE, ears.EAR_OFF_CODE)
+        run(p.apply_state(left=("palette", 4), right=("palette", 4)))
+        self.assertEqual(len(self.h.calls), ears.BURST_REPEATS + 1)
+        self.assertEqual(p.palette_code["left"], 4)
+        self.assertEqual(p.palette_code["right"], 4)
+
+    def test_mixed_picks_apply_both_sides(self):
+        p = self.h.pair
+        self._set(0x64, 0x64)
+        run(p.apply_state(left=("simple", 0x66), right=("palette", 9)))
+        self.assertEqual(p.codes["left"], 0x66)
+        self.assertIsNone(p.palette_code["left"])
+        self.assertEqual(p.palette_code["right"], 9)
+        # A right-only palette pick tracks palette_code, not codes (which
+        # still holds the last simple shade the right ear was on).
+        self.assertEqual(p.codes["right"], 0x64)
+
+    def test_off_already_off_ear_is_noop(self):
+        p = self.h.pair
+        self._set(0x67, ears.EAR_OFF_CODE)
+        run(p.apply_state(right=("simple", ears.EAR_OFF_CODE)))
+        self.assertEqual(self.h.calls, [])
+        self.assertEqual(p.codes["right"], ears.EAR_OFF_CODE)
+
+    def test_effect_applied_after_colors(self):
+        p = self.h.pair
+        run(p.apply_state(both=("simple", 0x62), effect=(0x84, "Strobe flash")))
+        self.assertEqual(p.codes["left"], 0x62)
+        self.assertEqual(p.running_effect, "Strobe flash")
+        self.assertTrue(p.desired_on["left"] and p.desired_on["right"])
+
+
 if __name__ == "__main__":
     unittest.main()
