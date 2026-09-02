@@ -1,0 +1,19 @@
+select_color:
+  name: Select exact color
+  description: >-
+    Sends one exact catalog color to the ears, bypassing color-wheel
+    snapping so near-identical shades (simple blue vs palette pure blue)
+    arrive as distinct commands.
+  target:
+    entity:
+      domain: light
+  fields:
+    color:
+      required: true
+      name: Color
+      description: >-
+        The exact color to send: a catalog name ("lime green", "pure blue")
+        or a "kind:value" selector ("simple:0x61", "palette:4").
+      example: "simple:0x61"
+      selector:
+        text:

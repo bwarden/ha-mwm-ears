@@ -37,9 +37,9 @@ box, which the form suggests together; either half is optional:
   three share a device and always agree -- they are views over one
   room-state store). *Ears* maps to the protocol's native both-ear
   frames; *Right Ear* to the right-only frames; *Left Ear* is the
-  composed proxy (both -> left colour, then right-only restore).
+  composed proxy (both -> left color, then right-only restore).
   *Ears* is on when either ear is on, so turning it off turns both off.
-  - Any colour from HA's picker snaps to the nearest representable shade
+  - Any color from HA's picker snaps to the nearest representable shade
     using hue-dominant matching (hue drift is penalised far more than
     brightness drift, so dark/muted requests stay in family instead of
     leaping to a bright neighbour), then transmits ONLY verified corpus
@@ -47,14 +47,14 @@ box, which the form suggests together; either half is optional:
     rig session 2026-08-23 confirmed multi-byte phrases are sequential
     opcode scripts -- last opcode wins on both ears -- so no per-side
     fused phrases are ever invented):
-    - simple colours: both-ears `90 6X`, right-only `90 68+X`. Right-slot
+    - simple colors: both-ears `90 6X`, right-only `90 68+X`. Right-slot
       changes send the single right-only form (no visible flash); left
       changes compose `90 <left>` + `90 <right-only restore>`.
     - palette shades: both-ears `91 0E pp`, right-only `91 0E pp|80`.
       Left picks compose both+restore when the right ear already holds a
       palette shade, else degrade to the both-ears form.
     - equal pairs use just the canonical single frame (incl. `90 60` off).
-    No leading `24` override precedes colour writes: it blacks the ears
+    No leading `24` override precedes color writes: it blacks the ears
     for seconds and the canonical frames land without it (rig-verified).
     Effect invocation still leads with `24` (doc: required to escape a
     running program). Each logical command re-transmits as a GROUP --
@@ -63,7 +63,7 @@ box, which the form suggests together; either half is optional:
   - Effects appear in HA's drop-down (the entity declares EFFECT
     support) and apply to the ears as a whole -- the protocol has no
     per-ear effect invocation. Effect picks invoke verified `48 XX`
-    programs. Bare toggles re-issue the remembered colour, defaulting
+    programs. Bare toggles re-issue the remembered color, defaulting
     to white.
   - By default the lights follow the room (passive): an overheard FOREIGN
     command (wand or other transmitter) is adopted into the displayed
@@ -76,7 +76,7 @@ box, which the form suggests together; either half is optional:
     state immediately any time it hears a foreign MWM phrase (beacon, wand,
     or other transmitter) rather than adopting it -- ears are pulled back
     onto your state, held OFF or ON. On the periodic timer: an enforced ON
-    is re-asserted every ~10 s (to hold colour against demo/standalone
+    is re-asserted every ~10 s (to hold color against demo/standalone
     drift), while an enforced OFF backs off to every ~90 s -- just under
     the ~2 min after which ears fall back into demo mode -- so they stay
     dark without flogging the IR bus. Foreign commands are overridden rather
@@ -122,9 +122,9 @@ delete and re-add them.
 A Lovelace custom card is bundled with the integration
 (`custom_components/mwm_ears/frontend/mwm-ears-card.js`) for controlling the
 ears from the dashboard. It shows three palettes — **Left Ear**, **Both
-Ears**, **Right Ear** — with every representable colour, plus an **effects**
+Ears**, **Right Ear** — with every representable color, plus an **effects**
 picker, all driven through the integration's `light.*` entities so each pick
-emits the correct, verified IR frames (colour snapping, per-side composition,
+emits the correct, verified IR frames (color snapping, per-side composition,
 and effect invocation are all handled by the integration).
 
 ### Install
@@ -159,23 +159,41 @@ title: My Ears
 
 - `entity` is the Both-ear light; it drives the "Both Ears" palette and the
   effects picker.
-- `left_entity` / `right_entity` are optional. A side palette without its
-  entity is shown read-only; provide all three for full per-ear control.
+- `left_entity` / `right_entity` are optional. The card auto-detects them as
+  the `side`-stamped lights that share the Both entity's Home Assistant
+  device (the integration registers the Left/Both/Right lights on one device
+  per room), so `entity` alone is enough on a fresh install. Set them only to
+  override the detection. A side whose entity is neither configured nor
+  detected is shown read-only.
 - The swatches come from the live `color_palette` entity attribute
   (`python/.../_mwm/palette.py::color_palette`), so the card always shows
-  exactly the colours the integration can represent — no palette copy in JS.
+  exactly the colors the integration can represent — no palette copy in JS.
 
-### Behaviour
+### Behavior
 
-- Clicking a swatch calls `light.turn_on` with that RGB on the matching side
-  entity; the integration snaps to the nearest verified ear shade and emits
-  the right frames (simple right-only, composed both+restore for left,
-  canonical both for both).
-- **On / Off** control the whole pair (the Both entity). **Restore colour**
-  clears a running effect and re-issues the remembered colour (a bare
+- Clicking a swatch calls the integration's `mwm_ears.select_color` action
+  with the exact catalog selector (`simple:0x61`, `palette:4`) on the
+  matching side entity. The action sends the selected shade **exactly** —
+  bypassing color-wheel snapping — so near-identical shades that are
+  distinct protocol commands (simple `0x61` blue vs palette `0x04` pure
+  blue) can be sent and tested individually. The active swatch is matched by
+  the entity's `color_identity` attribute (kind + code/index), never by RGB.
+- Picking from the HA color wheel still snaps to the nearest shade, and
+  palette shades that look identical to a one-bit simple color (e.g. lime
+  green → simple green) resolve to the simple opcode, whose right-only
+  primitive is a single command.
+- **On / Off** control the whole pair (the Both entity). **Restore color**
+  clears a running effect and re-issues the remembered color (a bare
   `turn_on`); it does not turn the ears off.
 - The **Effects** picker runs a room-wide effect program via the Both entity
   (effect programs are not per-ear).
+
+The `select_color` action is also available from HA's Actions developer
+tool, scripts, and automations. Its `color` field accepts a catalog name
+(`"lime green"`, `"pure blue"`, case-insensitive, tolerating spelling
+variants such as `gray`/`grey`) or a `"kind:value"` selector
+(`"simple:0x61"`, `"palette:4"`, or `"palette:white"`), and targets any of
+the three side entities.
 
 ## Room-level awareness
 
@@ -184,7 +202,7 @@ send -- wand pushes, another transmitter, idle beacons from ear hats --
 the light entities reflect what was understood of them, and periodic
 repetition suspends until you act again (we don't fight other controllers
 for the room). Our own transmissions echoed back within a short window are
-recognised as such and ignored for this purpose.
+recognized as such and ignored for this purpose.
 
 ## Development
 
@@ -215,11 +233,11 @@ The rig research tools under `../tools/` drive and analyse real ears on
 the MQTT test rig, standalone (no Home Assistant). Full documentation is
 in `../README.md`; the shared `_bootstrap.py` / `_mqtt.py` helpers and
 their usage are described there. The set includes interactive senders,
-beacon capture/analysis, colour-cycle testing, and offline log decoding.
+beacon capture/analysis, color-cycle testing, and offline log decoding.
 
-### colour cycle test (`../tools/color_cycle.py`)
+### color cycle test (`../tools/color_cycle.py`)
 
-Sends every simple colour, palette shade, composite frame, and built-in
+Sends every simple color, palette shade, composite frame, and built-in
 effect one at a time via MQTT (Tasmota IRsend), prompting for free-form
 notes after each command. Results are logged to a JSON file for later
 analysis.

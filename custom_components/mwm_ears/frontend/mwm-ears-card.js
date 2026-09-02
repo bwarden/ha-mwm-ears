@@ -2,33 +2,33 @@
  * mwm-ears-card: Lovelace custom card for the `mwm_ears` Home Assistant
  * integration.
  *
- * Shows the three ear-colour palettes (Left / Both / Right) with every
- * representable colour, plus an effects picker, and drives the integration's
- * `light.*` entities:
+* Shows the three ear-color palettes (Left / Both / Right) with every
+ * representable color, plus an effects picker, and drives the integration:
  *
- *   - a palette swatch pick calls `light.turn_on` with that RGB on the
- *     matching side entity, so the integration's colour snapping selects the
- *     nearest verified ear shade and emits the correct IR frame (simple
- *     right-only, composed both+restore for left, canonical both for both);
- *   - the effects picker calls `light.turn_on` (effect = name) on the Both
- *     entity -- effect programs are room-wide, not per-ear.
+ *   - a palette swatch pick calls the integration's `select_color` action
+ *     with the exact catalog selector (`simple:0x61`, `palette:4`), so
+ *     near-identical shades that are distinct protocol commands (simple
+ *     0x61 blue vs palette 0x04 pure blue) are sent distinct -- the color
+ *     wheel's RGB round-trip cannot tell them apart, but the action can;
+ *   - the on/off buttons and the effects picker call `light.turn_on` /
+ *     `light.turn_off` on the Both entity -- effect programs are room-wide,
+ *     not per-ear.
  *
  * The swatches are read from the entity's `color_palette` attribute
  * (rendered by python/custom_components/mwm_ears/_mwm/palette.py::
  * color_palette), so the card always shows exactly what the integration can
- * represent and needs no palette copy of its own.
+ * represent and needs no palette copy of its own. The active swatch is
+ * matched against the entity's `color_identity` attribute (kind plus
+ * code/index), never by RGB.
  *
  * Usage:
  *   - Register this file as a Lovelace resource (see python/README.md).
- *   - Configure with the "ears" (Both) light entity as the minimum:
- *     {
- *       "type": "custom:mwm-ears-card",
- *       "entity": "light.ears",
- *       "left_entity": "light.left_ear",
- *       "right_entity": "light.right_ear"
- *     }
- *   left_entity / right_entity are optional; without them that side's palette
- *   is displayed using the Both entity's palette but disabled.
+ *  - Configure with the "ears" (Both) light entity as the minimum:
+ *      { "type": "custom:mwm-ears-card", "entity": "light.ears" }
+ *  left_entity / right_entity are optional: the card auto-detects them as
+ *  the `side`-stamped lights sharing the Both entity's Home Assistant
+ *  device. Set them only to override the auto-detection. A side whose
+ *  entity is neither configured nor detected renders its palette read-only.
  */
 const MWM_CARD_TAG = "mwm-ears-card";
 const MWM_EDITOR_TAG = "mwm-ears-card-editor";
@@ -47,11 +47,13 @@ class MwmEarsCard extends HTMLElement {
     }
     this._config = { ...config, title: config.title || "MWM Ears" };
     this._lastKey = null;
+    this._sides = null;
     this._reconcile();
   }
 
   set hass(hass) {
     this._hass = hass;
+    this._resolveSides();
     const key = this._stateKey(hass);
     if (key !== this._lastKey) {
       this._lastKey = key;
@@ -71,23 +73,67 @@ class MwmEarsCard extends HTMLElement {
   // Rebuild the DOM only when the underlying state actually changed, to keep
   // slider/focus state and avoid churn on unrelated hass updates.
   _stateKey(hass) {
-    const ids = [this._config && this._config.entity,
-                 this._config && this._config.left_entity,
-                 this._config && this._config.right_entity].filter(Boolean);
+    const ids = [(this._config && this._config.entity),
+                 this._sides && this._sides.left,
+                 this._sides && this._sides.right].filter(Boolean);
     return ids.map((id) => {
       const s = hass && hass.states && hass.states[id];
-      return s ? `${s.state}:${(s.attributes || {}).rgb_color}:${(s.attributes || {}).effect}` : "none";
+      return s ? `${s.state}:${(s.attributes || {}).rgb_color}:${(s.attributes || {}).color_identity}:${(s.attributes || {}).effect}` : "none";
     }).join("|");
   }
 
   _stateOf(key) {
-    const id = this._config && this._config[key];
-    return id && this._hass ? this._hass.states[id] : undefined;
+    if (key === "entity") {
+      const id = this._config && this._config.entity;
+      return id && this._hass ? this._hass.states[id] : undefined;
+    }
+    const sideId = this._sides && this._sides[key];
+    return sideId && this._hass ? this._hass.states[sideId] : undefined;
   }
 
-  _call(entityId, service, data) {
+  // Left/right entities for this card: explicit config wins, otherwise the
+  // side entities derived from the Both entity.
+  _resolveSides() {
+    const sides = {
+      both: (this._config && this._config.entity) || "",
+      left: (this._config && this._config.left_entity) || "",
+      right: (this._config && this._config.right_entity) || "",
+    };
+    const derived = this._deriveSides();
+    if (!sides.left && derived.left) sides.left = derived.left;
+    if (!sides.right && derived.right) sides.right = derived.right;
+    this._sides = sides;
+  }
+
+  // The integration registers the left/both/right lights on ONE HA device per
+  // room (light.py: DeviceInfo identifiers {(DOMAIN, f"mwm_ears_<entry>")})
+  // and stamps each entity with a `side` attribute. We find the siblings
+  // through the entity registry's device_id rather than by name, so detection
+  // survives any entity rename and needs no name conventions.
+  _deriveSides() {
+    const out = { left: "", right: "" };
+    const hass = this._hass;
+    if (!hass || !this._config || !this._config.entity) return out;
+    const reg = hass.entities;
+    if (!reg) return out;
+    const bothReg = reg[this._config.entity];
+    const deviceId = bothReg && bothReg.device_id;
+    if (!deviceId) return out;
+    for (const s of Object.values(hass.states)) {
+      const a = s.attributes || {};
+      const side = a.side;
+      if (s.entity_id && s.entity_id.startsWith("light.") &&
+          (side === "left" || side === "right")) {
+        const ent = reg[s.entity_id];
+        if (ent && ent.device_id === deviceId) out[side] = s.entity_id;
+      }
+    }
+    return out;
+  }
+
+  _call(entityId, domain, service, data) {
     if (!entityId || !this._hass) return;
-    this._hass.callService("light", service, { entity_id: entityId, ...data });
+    this._hass.callService(domain, service, { entity_id: entityId, ...data });
   }
 
   _rgbOf(state) {
@@ -108,12 +154,25 @@ class MwmEarsCard extends HTMLElement {
     return [];
   }
 
-  _swatchMatch(rgb, current) {
-    if (!current) return false;
+  _swatchActive(c, state) {
+    // Match by catalog identity (kind + code/index) when the integration
+    // exposes it -- near-identical shades are distinct commands and RGB
+    // cannot tell a 0xFE from a 0xFF through the HS round-trip. Fall back
+    // to exact RGB equality only for older integration versions.
+    const a = state && state.attributes;
+    const id = a && a.color_identity;
+    if (id) {
+      return (
+        id.kind === c.kind &&
+        (c.kind === "simple" ? id.code === c.code : id.index === c.index)
+      );
+    }
+    const current = this._rgbOf(state);
+    if (!current || !c.rgb) return false;
     return (
-      Math.max(Math.abs(rgb[0] - current[0]),
-               Math.abs(rgb[1] - current[1]),
-               Math.abs(rgb[2] - current[2])) <= 8
+      current[0] === c.rgb[0] &&
+      current[1] === c.rgb[1] &&
+      current[2] === c.rgb[2]
     );
   }
 
@@ -129,15 +188,16 @@ class MwmEarsCard extends HTMLElement {
     if (!enabled) {
       const n = document.createElement("div");
       n.className = "note";
-      n.textContent = `Configure "${sideKey}" to control this ear independently.`;
+      n.textContent = `No entity for this ear. It is auto-detected from the Both entity's device; set "${sideKey}" to override.`;
       section.appendChild(n);
       return section;
     }
 
     const state = this._stateOf(sideKey);
     const catalog = this._palette(state, bothState);
-    const current = this._rgbOf(state);
-    const entityId = this._config[sideKey];
+    const entityId = (sideKey === "entity")
+      ? (this._config && this._config.entity)
+      : (this._sides && this._sides[sideKey]);
 
     const grid = document.createElement("div");
     grid.className = "swatches";
@@ -145,14 +205,17 @@ class MwmEarsCard extends HTMLElement {
     for (const c of catalog) {
       const rgb = c.rgb || [0, 0, 0];
       const btn = document.createElement("button");
-      btn.className = "swatch" + (this._swatchMatch(rgb, current) ? " active" : "");
+      btn.className = "swatch" + (this._swatchActive(c, state) ? " active" : "");
       btn.style.background = `rgb(${rgb.join(",")})`;
       btn.title = c.name;
       const label = document.createElement("span");
       label.textContent = c.name;
       btn.appendChild(label);
       btn.addEventListener("click", () => {
-        this._call(entityId, "turn_on", { rgb_color: rgb });
+        const color = c.kind === "simple"
+          ? `simple:0x${c.code.toString(16)}`
+          : `palette:${c.index}`;
+        this._call(entityId, "mwm_ears", "select_color", { color });
       });
       grid.appendChild(btn);
     }
@@ -184,8 +247,8 @@ class MwmEarsCard extends HTMLElement {
       return btn;
     };
 
-    make("On", "on", () => this._call(this._config.entity, "turn_on", {}));
-    make("Off", "off", () => this._call(this._config.entity, "turn_off", {}));
+    make("On", "on", () => this._call(this._config.entity, "light", "turn_on", {}));
+    make("Off", "off", () => this._call(this._config.entity, "light", "turn_off", {}));
 
     section.appendChild(grid);
     return section;
@@ -226,7 +289,7 @@ class MwmEarsCard extends HTMLElement {
     }
     select.addEventListener("change", () => {
       if (select.value) {
-        this._call(this._config.entity, "turn_on", { effect: select.value });
+        this._call(this._config.entity, "light", "turn_on", { effect: select.value });
         select.value = "";
       }
     });
@@ -235,12 +298,12 @@ class MwmEarsCard extends HTMLElement {
     row.appendChild(select);
     section.appendChild(row);
 
-    // "Restore colour" clears a running effect and re-issues the remembered
-    // colour (a bare turn_on restores it); it does NOT turn the ears off.
+    // "Restore color" clears a running effect and re-issues the remembered
+    // color (a bare turn_on restores it); it does NOT turn the ears off.
     const restore = document.createElement("button");
-    restore.textContent = "Restore colour";
+    restore.textContent = "Restore color";
     restore.addEventListener("click", () => {
-      this._call(this._config.entity, "turn_on", {});
+      this._call(this._config.entity, "light", "turn_on", {});
     });
     section.appendChild(restore);
 
@@ -255,6 +318,7 @@ class MwmEarsCard extends HTMLElement {
 
   _reconcile() {
     if (!this.shadowRoot) return;
+    if (!this._sides) this._resolveSides();
     const root = this.shadowRoot;
     root.innerHTML = "";
 
@@ -313,14 +377,14 @@ class MwmEarsCard extends HTMLElement {
 
     card.appendChild(this._buildOnOff());
     card.appendChild(this._buildPaletteSection("left_entity", "Left Ear",
-      "Left picks compose a fused both+restore frame so the right ear keeps its colour.",
+      "Left picks compose a fused both+restore frame so the right ear keeps its color.",
       bothState,
-      { enabled: !!this._config.left_entity }));
+      { enabled: !!this._sides.left }));
     card.appendChild(this._buildPaletteSection("entity", "Both Ears",
       "Sets both ears to the chosen shade (the protocol's native form).", bothState));
     card.appendChild(this._buildPaletteSection("right_entity", "Right Ear",
       "Right picks use the verified right-only form directly.", bothState,
-      { enabled: !!this._config.right_entity }));
+      { enabled: !!this._sides.right }));
     card.appendChild(this._buildEffects(bothState));
   }
 }
@@ -452,7 +516,7 @@ class MwmEarsCardEditor extends HTMLElement {
 
     const hint = document.createElement("div");
     hint.className = "hint";
-    hint.textContent = "The 'both' entity is required. Left/right entities are optional; a palette without its entity is shown read-only.";
+    hint.textContent = "The 'both' entity is required. Left/right ears are auto-detected from the Both entity's device; set them only to override.";
     root.appendChild(hint);
 
     this._renderEntities();
@@ -466,5 +530,5 @@ window.customCards = window.customCards || [];
 window.customCards.push({
   type: MWM_CARD_TAG,
   name: "MWM Ears",
-  description: "Control Disney Made-With-Magic ears: left/both/right colour palettes and an effects picker.",
+  description: "Control Disney Made-With-Magic ears: left/both/right color palettes and an effects picker.",
 });

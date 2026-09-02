@@ -199,7 +199,7 @@ class BundleTests(unittest.TestCase):
     """A-B-A' wand/ear command bundles (doc section 3)."""
 
     def test_recognises_phrase_companion_phrase(self):
-        phrase = build_frame([0x61, 0x6A])          # two-opcode colour script
+        phrase = build_frame([0x61, 0x6A])          # two-opcode color script
         companion = build_frame(                    # pulse w/ cycle params
             [0x24, 0x58, 0xF0, 0x48, 0x04, 0xD0, 0x42, 0x0A]
         )
@@ -224,7 +224,7 @@ class BundleTests(unittest.TestCase):
         self.assertEqual(out["phrase_hex"], phrase_a.hex().upper())
 
     def test_short_phrases_still_require_exact_match(self):
-        """Tail exemption must not fuse distinct short colour commands."""
+        """Tail exemption must not fuse distinct short color commands."""
         off = build_frame([0x60])          # canonical 90 60 A6
         blue = build_frame([0x61])
         self.assertIsNone(describe_bundle([off, blue, blue]))

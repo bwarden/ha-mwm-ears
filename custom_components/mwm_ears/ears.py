@@ -52,7 +52,7 @@ _PALETTE_TEMPLATE_TAIL = [0x18, 0x04]
 
 # Extra transmissions per logical command beyond the first, sent IMMEDIATELY
 # back-to-back (the frames' footers space them; no pause between repeats so
-# rapid colour-wheel browsing isn't held up). Mirrors ir-mwm-send which
+# rapid color-wheel browsing isn't held up). Mirrors ir-mwm-send which
 # repeats each frame; the extra pass covers a cold receiver / dropped IR.
 BURST_REPEATS = 1
 # Kept for API/prototype compatibility (constructor default); the group
@@ -76,16 +76,16 @@ BEACON_STALE_AFTER_COMMAND_S = 15.0
 # sole control of the ears -- re-asserting the light-entity state and NOT
 # adopting foreign commands (overridden by the re-assert).  Our own
 # transmitted echoes are ignored (matches_recent).  The passive mode
-# (switch OFF) keeps the existing reflect-what-we-hear behaviour, and the
+# (switch OFF) keeps the existing reflect-what-we-hear behavior, and the
 # silence rule -- if no beacon is heard for BEACON_TIMEOUT_S while a light
 # is on, assume the ears powered off -- applies only there; enforcement
 # never assumes off.
 ENFORCE_INTERVAL_S = 10
 # Re-assert cadence when the enforced state is OFF.  Ears are silent ~2 min
-# after a command, then fall back into demo/beaconing mode and show colour;
+# after a command, then fall back into demo/beaconing mode and show color;
 # re-asserting OFF every ~90 s (well inside that window) keeps them dark by
 # perpetually resetting the demo-entry timer.  An enforced ON state is
-# re-asserted on the fast ENFORCE_INTERVAL_S tick instead (to hold colour
+# re-asserted on the fast ENFORCE_INTERVAL_S tick instead (to hold color
 # against drift).  Any foreign (non-echo) phrase triggers an IMMEDIATE
 # re-assert that restarts the back-off (see enforce_reassert).
 ENFORCE_OFF_INTERVAL_S = 90
@@ -151,7 +151,7 @@ class EarPairState:
         # The exact IR frames of the last command that drove the display --
         # a user pick OR an adopted foreign frame.  Enforcement re-asserts
         # THESE (not a passive re-derivation) so it faithfully holds whatever
-        # was last asked for -- simple colour, palette shade, or effect
+        # was last asked for -- simple color, palette shade, or effect
         # program -- and so that switching enforcement ON after a foreign
         # wand took over re-anchors to the adopted state instead of
         # re-blasting a stale pre-wand command.  `_state_frames()` (which
@@ -179,11 +179,11 @@ class EarPairState:
         return SIMPLE_COLORS[code][0] if code in SIMPLE_COLORS else "unknown"
 
     def side_hs_color(self, side: str) -> tuple[float, float] | None:
-        """Return (hue, saturation) for the ear's current colour, or None.
+        """Return (hue, saturation) for the ear's current color, or None.
 
         Returns None when an effect program is running (the effect
-        controls colour, not stored codes) or when the ear is off.
-        For BOTH, returns the colour only when left and right agree;
+        controls color, not stored codes) or when the ear is off.
+        For BOTH, returns the color only when left and right agree;
         returns None when they diverge.
         """
         if self.running_effect is not None:
@@ -211,11 +211,43 @@ class EarPairState:
             return left if left == right else None
         return _hs_for(side)
 
+    def side_picked(self, side: str) -> dict | None:
+        """Exact identity of the color currently on ``side``, or None.
+
+        Returns the catalog shape the frontend card highlights against:
+        ``{"kind": "simple", "code": N}`` or ``{"kind": "palette",
+        "index": N}``.  Near-identical shades that are DISTINCT protocol
+        commands (simple 0x61 "blue" vs palette 0x04 "pure blue") must stay
+        distinct, so this is by code/index -- never by RGB, which cannot
+        tell a 0xFE from a 0xFF through the HS round-trip.  Mirrors
+        ``side_hs_color``'s empty cases: off and running effects yield None,
+        and BOTH yields the identity only when the left and right ears agree.
+        """
+        if self.running_effect is not None:
+            return None
+
+        def _picked_for(s: str) -> dict | None:
+            pp = self.palette_code.get(s)
+            if pp is not None and pp in PALETTE:
+                return {"kind": "palette", "index": pp}
+            code = self.codes.get(s, EAR_OFF_CODE)
+            if code == EAR_OFF_CODE:
+                return None
+            if code in SIMPLE_COLORS:
+                return {"kind": "simple", "code": code}
+            return None
+
+        if side == BOTH:
+            left = _picked_for(LEFT)
+            right = _picked_for(RIGHT)
+            return left if left == right else None
+        return _picked_for(side)
+
     # -- ours-vs-foreign discrimination ----------------------------------
 
     def _mark_sent(self, frame: bytes) -> None:
         # Composed commands are MULTI-frame groups; remember each frame
-        # so echoes of any member are recognised as ours.
+        # so echoes of any member are recognized as ours.
         self._recent_sent.append((bytes(frame).hex().upper(), self._clock()))
         del self._recent_sent[:-16]
 
@@ -257,7 +289,7 @@ class EarPairState:
         Runs on the shared ENFORCE_INTERVAL_S ticker but only actually
         transmits when it is time for this pair:
 
-        - enforced ON:  re-assert every ENFORCE_INTERVAL_S (hold colour
+        - enforced ON:  re-assert every ENFORCE_INTERVAL_S (hold color
           against demo/standalone drift),
         - enforced OFF: back off to ENFORCE_OFF_INTERVAL_S so we keep the
           ears out of demo mode without flogging the IR bus (keeps them
@@ -322,7 +354,7 @@ class EarPairState:
     # -- commands ---------------------------------------------------------
 
     def _ear_color(self, side: str) -> tuple[str, int]:
-        """Resolve one ear's effective colour as ('simple'|'palette', value).
+        """Resolve one ear's effective color as ('simple'|'palette', value).
 
         A palette shade wins over any lingering simple code: applying a
         palette shade records it in ``palette_code`` and leaves ``codes``
@@ -349,7 +381,7 @@ class EarPairState:
 
         Multi-byte phrases run opcodes sequentially against both ears, so a
         both-ear opcode followed by a right-only opcode achieves per-side
-        control in one burst.  This is what lets a left-ear colour pick leave
+        control in one burst.  This is what lets a left-ear color pick leave
         the right ear untouched in a single transmission (no intermediate
         flash, no clobbering a simple right with a both-ears palette frame).
         """
@@ -377,7 +409,7 @@ class EarPairState:
         Every pass runs the full sequence back-to-back and passes are sent
         immediately after one another -- the frames' built-in footers
         provide the inter-message spacing (no artificial pause between
-        repeats, so rapid colour-wheel browsing isn't held up). One failed
+        repeats, so rapid color-wheel browsing isn't held up). One failed
         pass logs and continues: partial IR still lands and the remaining
         passes heal it.
         """
@@ -462,7 +494,7 @@ class EarPairState:
         await self._send_state(BURST_REPEATS)
 
     async def turn_on_both(self) -> int:
-        """Bare both-ears turn-on: restore the pair's remembered colour."""
+        """Bare both-ears turn-on: restore the pair's remembered color."""
         code = (
             self.last_simple[LEFT] or self.last_simple[RIGHT]
             or DEFAULT_COLOR_CODE
@@ -485,7 +517,7 @@ class EarPairState:
             # Wand/paintbrush phrases carry structured fields: either an
             # explicit palette shade or a named program whose visuals we
             # cannot reproduce frame-for-frame -- record what was chosen,
-            # never invent ear colours the phrase did not state.
+            # never invent ear colors the phrase did not state.
             pal = desc.get("palette")
             if pal:
                 pp = pal["index"]
@@ -547,7 +579,7 @@ class EarPairState:
         elif desc.get("effect") is not None:
             # Any other shape whose payload names an effect program
             # (long wand scripts etc.): record the program even when the
-            # colour choreography itself stays opaque to us.
+            # color choreography itself stays opaque to us.
             self.running_effect = effect_label(desc["effect"])
             self.palette_code = {LEFT: None, RIGHT: None}
             self.desired_on = {LEFT: True, RIGHT: True}
@@ -625,7 +657,7 @@ class EarPairState:
     async def turn_off_side(self, side: str) -> None:
         """Turn one ear off.
 
-        Routes through _send_state, so the other ear keeps its colour via
+        Routes through _send_state, so the other ear keeps its color via
         the both+right-only composition.  Already-dark ears are a no-op
         with no transmission: HA fires turn_off liberally (automations,
         area off, stale restored state) and re-bursting here once
@@ -803,7 +835,7 @@ class ObservedHub:
                     # state (the one true re-assert trigger is "not ours").
                     if pair.enforce:
                         reassert.add(pair)
-                    # The effect/colour observations report what the ears
+                    # The effect/color observations report what the ears
                     # are *currently* doing (useful for diagnostics), but
                     # for an ENFORCING pair they must not clobber the held
                     # command: enforcement re-asserts its own state, so we

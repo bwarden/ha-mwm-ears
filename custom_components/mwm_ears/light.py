@@ -12,11 +12,19 @@ from homeassistant.components.light import (
     LightEntityFeature,
 )
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.core import HomeAssistant
+from homeassistant.const import ATTR_ENTITY_ID
+from homeassistant.core import HomeAssistant, ServiceCall
+from homeassistant.exceptions import ServiceValidationError
 from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.util.color import color_hs_to_RGB
 
-from ._mwm import color_palette, nearest_entry
+from ._mwm import (
+    PALETTE,
+    SIMPLE_COLORS,
+    color_palette,
+    nearest_entry,
+    parse_color,
+)
 from .const import CONF_EMITTER_ENTITY, INTEGRATION_VERSION, DOMAIN, HUB_KEY
 from .ears import (
     BOTH,
@@ -48,6 +56,24 @@ LIGHT_EFFECTS: dict[str, int] = {
 
 _SIDE_NAMES = {BOTH: "Both", LEFT: "Left", RIGHT: "Right"}
 
+# Live light instances by entity id, for the domain's select_color service
+# (exact-command color picks that bypass color-wheel snapping).
+_BY_ENTITY_ID: dict[str, "MwmEarLight"] = {}
+_select_service_registered = False
+
+
+async def _select_color_service(call: ServiceCall) -> None:
+    """Handle mwm_ears.select_color: send one exact catalog color."""
+    target = call.data.get(ATTR_ENTITY_ID)
+    entity_id = target[0] if isinstance(target, (list, tuple)) else target
+    light = _BY_ENTITY_ID.get(entity_id)
+    if light is None:
+        raise ServiceValidationError(f"not an MWM Ears light entity: {entity_id}")
+    color = call.data.get("color")
+    if not isinstance(color, str):
+        raise ServiceValidationError("'color' must be a kind:value string")
+    await light.async_select_color(color)
+
 
 async def async_setup_entry(
     hass: HomeAssistant,
@@ -60,6 +86,12 @@ async def async_setup_entry(
     name = entry.data["name"]
     if not entry.data.get(CONF_EMITTER_ENTITY):
         return  # this instance has no emitter half
+
+    global _select_service_registered
+    if not _select_service_registered:
+        hass.services.async_register(DOMAIN, "select_color", _select_color_service)
+        _select_service_registered = True
+
     async_add_entities(
         [
             MwmEarLight(store, hub, entry, BOTH),
@@ -74,8 +106,8 @@ class MwmEarLight(LightEntity):
 
     Both entities control the same physical room of ears; composing the
     both-ears and right-only primitives keeps their simple colors
-    independent. Any HS colour picked in HA
-    snaps to the nearest representable ear shade (7 simple colours plus the
+    independent. Any HS color picked in HA
+    snaps to the nearest representable ear shade (7 simple colors plus the
     measured 29-shade palette). Palette shades apply to both ears at once --
     a protocol limitation, noted in the entity attributes. When a foreign
     MWM command is overheard, the entity shows the suspension instead of
@@ -116,8 +148,10 @@ class MwmEarLight(LightEntity):
     async def async_added_to_hass(self) -> None:
         self._store.listeners.append(self.async_write_ha_state)
         self._hub.listeners.append(self.async_write_ha_state)
+        _BY_ENTITY_ID[self.entity_id] = self
 
     async def async_will_remove_from_hass(self) -> None:
+        _BY_ENTITY_ID.pop(self.entity_id, None)
         for listeners in (self._store.listeners, self._hub.listeners):
             try:
                 listeners.remove(self.async_write_ha_state)
@@ -144,6 +178,19 @@ class MwmEarLight(LightEntity):
         return None
 
     @property
+    def color_identity(self) -> dict | None:
+        """Exact catalog identity currently on this ear, for the card.
+
+        ``{"kind": "simple", "code": 0x61}`` or ``{"kind": "palette",
+        "index": 4}`` -- the shape the card's swatches match against.  Exact
+        ``select_color`` picks and color-wheel picks both land here because
+        they write the same codes/palette indices; near-identical shades that
+        are distinct commands (simple 0x61 blue vs palette 0x04 pure blue)
+        stay distinguishable, which RGB through the HS round-trip cannot.
+        """
+        return self._store.side_picked(self._side)
+
+    @property
     def effect_list(self) -> list[str] | None:
         # Effect programs are room-wide: a wand command re-programs every
         # ear in range regardless of which entity issued it. Offering the
@@ -158,23 +205,43 @@ class MwmEarLight(LightEntity):
         return {
             "side": self._side,
             "running_effect": self._store.running_effect,
+            "color_identity": self.color_identity,
             "palette_code": dict(self._store.palette_code),
             "suspended_by": self._store.suspended_by,
             "room_state": self._hub.snapshot(),
-            # Catalogue every representable ear colour (name, RGB, kind, and
+            # Catalog every representable ear color (name, RGB, kind, and
             # the protocol code/index), for the Lovelace card and any other
             # consumer. Identical on all three side entities -- each side can
-            # express every colour; only the transmitted frame differs (held
+            # express every color; only the transmitted frame differs (held
             # in light.py / ears.py, not here).
             "color_palette": color_palette(),
             "note": (
                 "Right-ear picks use verified right-only frames directly; "
                 "left picks fuse the pair into one frame so the right ear "
-                "keeps its colour (palette or simple) with no flash or "
+                "keeps its color (palette or simple) with no flash or "
                 "clobber. Repeats pause while a foreign MWM command is in "
                 "charge."
             ),
         }
+
+    async def async_select_color(self, color_spec: str) -> None:
+        """Send one EXACT catalog color, bypassing color-wheel snapping.
+
+        ``color_spec`` is a catalog name ("lime green", "pure blue") or a
+        "kind:value" selector ("simple:0x61", "palette:4"); ``parse_color``
+        validates it.  This is the only way to send near-identical shades
+        (simple 0x61 blue vs palette 0x04 pure blue) as distinct commands.
+        """
+        kind, code = parse_color(color_spec)
+        if kind == "simple":
+            if self._side == BOTH:
+                await self._store.apply_simple_both(code)
+            else:
+                await self._store.apply_simple(self._side, code)
+        elif self._side == BOTH:
+            await self._store.apply_palette(code)
+        else:
+            await self._store.apply_palette(code, side=self._side)
 
     async def async_turn_on(self, **kwargs) -> None:
         effect = kwargs.get(ATTR_EFFECT)

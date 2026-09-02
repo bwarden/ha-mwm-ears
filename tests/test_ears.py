@@ -62,7 +62,7 @@ class ApplyTests(unittest.TestCase):
         h.calls.clear()
         run(h.pair.apply_simple("right", 0x66))
         # Fast path: only the right slot changed -> single verified frame,
-        # repeated; the left ear never sees an intermediate colour.
+        # repeated; the left ear never sees an intermediate color.
         self.assertEqual(
             h.calls,
             [(build_frame([0x6E]).hex().upper(), 0)] * (ears.BURST_REPEATS + 1),
@@ -416,7 +416,7 @@ class EnforcementTests(unittest.TestCase):
 
     def test_enforce_reasserts_held_effect_frames(self):
         """Effect programs are held and re-asserted frame-for-frame too:
-        the 24-prefixed invocation must replay, not a simple colour."""
+        the 24-prefixed invocation must replay, not a simple color."""
         h = HubHarness()
         run(h.pair.apply_effect(0x84, "Strobe flash"))
         h.pair.set_enforce(True)
@@ -585,7 +585,7 @@ class CrossRoomIsolationTests(unittest.TestCase):
 
 
 class WandCommandTests(unittest.TestCase):
-    """96 19 wand phrases decode to programs/colours and drive adoption."""
+    """96 19 wand phrases decode to programs/colors and drive adoption."""
 
     def test_documented_program_adopted_as_running_effect(self):
         h = HubHarness()
@@ -673,7 +673,7 @@ class PaletteSideTests(unittest.TestCase):
         run(h.pair.apply_palette(0x00, side="right"))
         h.calls.clear()
         run(h.pair.apply_simple("left", 0x64))
-        # Changing the LEFT simple colour must leave the right's palette
+        # Changing the LEFT simple color must leave the right's palette
         # shade untouched -- fused `92 64 0E 80` in one burst.
         fused = build_frame([0x64, 0x0E, 0x00 | 0x80])
         self.assertEqual(
@@ -742,7 +742,7 @@ class OffSemanticsTests(unittest.TestCase):
 
     def test_turning_off_already_dark_ear_sends_nothing(self):
         # The standalone `24` blacks the ears for seconds (flow control);
-        # rig 2026-08-23 proved colour frames land without it, so only
+        # rig 2026-08-23 proved color frames land without it, so only
         # effect invocation (doc: required to escape running programs)
         # still leads with it.
         h = Harness()
@@ -881,6 +881,44 @@ class ReceiverDataTests(unittest.TestCase):
         self.assertEqual(rd.signals_seen, 1)
         self.assertIsNotNone(rd.last_signal_debug)
         self.assertEqual(rd.last_signal_debug["candidate_lengths"], [])
+
+
+class SidePickedTests(unittest.TestCase):
+    """Color identity mirrors the store: exact commands and wheel snaps both
+    write codes/palette indices, so side_picked is the single, RGB-free
+    source that lets the card highlight distinct near-identical shades."""
+
+    def test_simple_pick_identity(self):
+        h = Harness()
+        run(h.pair.apply_simple("left", 0x62))
+        self.assertEqual(h.pair.side_picked("left"), {"kind": "simple", "code": 0x62})
+
+    def test_palette_pick_identity(self):
+        h = Harness()
+        run(h.pair.apply_palette(0x0E, side="right"))
+        self.assertEqual(h.pair.side_picked("right"), {"kind": "palette", "index": 0x0E})
+
+    def test_both_palette_agrees(self):
+        h = Harness()
+        run(h.pair.apply_palette(0x04))
+        self.assertEqual(h.pair.side_picked("both"), {"kind": "palette", "index": 0x04})
+
+    def test_both_diverges_to_none(self):
+        h = Harness()
+        run(h.pair.apply_simple("left", 0x62))
+        run(h.pair.apply_palette(0x0E, side="right"))
+        self.assertIsNone(h.pair.side_picked("both"))
+        # Side queries still answer their own identity.
+        self.assertEqual(h.pair.side_picked("left"), {"kind": "simple", "code": 0x62})
+        self.assertEqual(h.pair.side_picked("right"), {"kind": "palette", "index": 0x0E})
+
+    def test_off_and_effect_yield_none(self):
+        h = Harness()
+        run(h.pair.apply_simple("left", ears.EAR_OFF_CODE))
+        self.assertIsNone(h.pair.side_picked("left"))
+        run(h.pair.apply_effect(0x84, "Strobe flash"))
+        self.assertIsNone(h.pair.side_picked("both"))
+        self.assertIsNone(h.pair.side_picked("left"))
 
 
 if __name__ == "__main__":

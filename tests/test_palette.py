@@ -6,7 +6,14 @@ import _bootstrap  # noqa: F401  (must precede mwm imports)
 
 import unittest
 
-from mwm.palette import PALETTE, SIMPLE_COLORS, color_palette, nearest_entry
+from mwm.palette import (
+    PALETTE,
+    SIMPLE_COLORS,
+    _normalize_color_name,
+    color_palette,
+    nearest_entry,
+    parse_color,
+)
 
 
 class TableTests(unittest.TestCase):
@@ -50,8 +57,11 @@ class SnapQualityTests(unittest.TestCase):
             delta = min(delta, 360 - delta)
             self.assertLessEqual(delta, 15.0, f"{target} lost its hue")
 
-    def test_grey_lands_on_white_not_a_pale_tint(self):
-        self.assertEqual(nearest_entry((128, 128, 128)), ("palette", 0x1C))
+    def test_gray_lands_on_white_not_a_pale_tint(self):
+        # Gray (no hue) must not drift to a pale tint; white is the only
+        # hue-free shade. It is also known-identical to the simple one-bit
+        # white, so it resolves to that opcode (simple right-only).
+        self.assertEqual(nearest_entry((128, 128, 128)), ("simple", 0x67))
 
     def test_saturated_teal_stays_cyan(self):
         self.assertEqual(nearest_entry((0, 128, 128)), ("simple", 0x63))
@@ -89,15 +99,82 @@ class NearestTests(unittest.TestCase):
             else:
                 self.assertIn(code, SIMPLE_COLORS)
 
+    def test_equivalent_palette_shades_snap_to_simple(self):
+        # The measured "pure"/lime/white twins differ from a one-bit simple
+        # color by a few LSBs; the color wheel snaps them to the simple
+        # opcode (single-code right-only primitive) since a viewer cannot
+        # tell them apart.
+        self.assertEqual(nearest_entry((0x01, 0xFF, 0x00)), ("simple", 0x62))  # lime green
+        self.assertEqual(nearest_entry((0x00, 0xFE, 0x00)), ("simple", 0x62))  # pure green
+        self.assertEqual(nearest_entry((0x00, 0x00, 0xFE)), ("simple", 0x61))  # pure blue
+        self.assertEqual(nearest_entry((0xFE, 0xFE, 0xFE)), ("simple", 0x67))  # palette white
+
+    def test_distinct_palette_shades_keep_palette(self):
+        # Visibly different measured shades are outside the equivalence band
+        # and keep their palette command (self-pick cost 0).
+        self.assertEqual(nearest_entry((0xFF, 0x2C, 0xFF)), ("palette", 0x0A))  # magenta
+        self.assertEqual(nearest_entry((0xFF, 0x00, 0x11)), ("palette", 0x0E))  # scarlet
+        self.assertEqual(nearest_entry((0x1F, 0x90, 0xFE)), ("palette", 0x01))  # sky blue
+
+    def test_parse_color_kind_value(self):
+        self.assertEqual(parse_color("simple:0x61"), ("simple", 0x61))
+        self.assertEqual(parse_color("simple:97"), ("simple", 0x61))
+        self.assertEqual(parse_color("palette:4"), ("palette", 4))
+        self.assertEqual(parse_color("palette:0x04"), ("palette", 4))
+
+    def test_parse_color_catalog_names(self):
+        self.assertEqual(parse_color("lime green"), ("palette", 0x1A))
+        self.assertEqual(parse_color(" Pure  Blue "), ("palette", 0x04))
+        self.assertEqual(parse_color("blue"), ("simple", 0x61))
+
+    def test_parse_color_kind_with_name(self):
+        self.assertEqual(parse_color("palette:white"), ("palette", 0x1C))
+        self.assertEqual(parse_color("simple:white"), ("simple", 0x67))
+
+    def test_parse_color_shared_name_prefers_simple(self):
+        # "white"/"cyan"/"magenta" exist in both tables; the bare name
+        # commands the simple one-bit opcode.
+        self.assertEqual(parse_color("white"), ("simple", 0x67))
+        self.assertEqual(parse_color("cyan"), ("simple", 0x63))
+        self.assertEqual(parse_color("magenta"), ("simple", 0x65))
+
+    def test_parse_color_tolerates_spelling_variants(self):
+        # Catalog spellings stay canonical; input is matched case-insensitively
+        # and tolerates gray/grey-style variants.
+        self.assertEqual(parse_color("  LIME   GREEN  "), ("palette", 0x1A))
+        self.assertEqual(
+            _normalize_color_name("grey"), _normalize_color_name("gray")
+        )
+
+    def test_parse_color_rejects_unknown(self):
+        for spec in ["chartreuse", "simple:0xFF", "palette:40", "simple:", "bogus:3"]:
+            with self.assertRaises(ValueError, msg=spec):
+                parse_color(spec)
+
 
 class ColorPaletteTests(unittest.TestCase):
     def test_lists_every_representable_colour(self):
-        # 7 simple one-bit colours + the 30 palette shades minus the
+        # 7 simple one-bit colors + the 30 palette shades minus the
         # black/off entry (0x1D).
         catalog = color_palette()
         self.assertEqual(len(catalog), 7 + 29)
         self.assertEqual(len([c for c in catalog if c["kind"] == "simple"]), 7)
         self.assertEqual(len([c for c in catalog if c["kind"] == "palette"]), 29)
+
+    def test_near_identical_simple_shades_stay_distinct(self):
+        # Palette 0x04 "pure blue" and simple 0x61 "blue" look alike but are
+        # different protocol commands; both must remain individually
+        # selectable, so the catalog keeps the full measured set.
+        picked = {c["name"]: c for c in color_palette()}
+        self.assertIn("pure blue", picked)
+        self.assertIn("blue", picked)
+        self.assertNotEqual(picked["pure blue"]["rgb"], picked["blue"]["rgb"])
+        palette_indexes = [
+            c["index"] for c in color_palette() if c["kind"] == "palette"
+        ]
+        self.assertIn(0x04, palette_indexes)
+        self.assertIn(0x12, palette_indexes)
+        self.assertIn(0x1C, palette_indexes)
 
     def test_simple_entry_shape(self):
         entry = next(c for c in color_palette() if c["kind"] == "simple")

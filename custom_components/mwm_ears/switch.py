@@ -4,7 +4,7 @@ When ON, the integration takes sole control of the room's ears -- the
 light-entity state is re-asserted every ENFORCE_INTERVAL_S and foreign
 commands (wand / other transmitter) are overridden.  When OFF (the default),
 the integration passively reflects whatever is heard, matching earlier
-behaviour.  See ears.py's enforcement section for the mode rules.
+behavior.  See ears.py's enforcement section for the mode rules.
 """
 
 from __future__ import annotations

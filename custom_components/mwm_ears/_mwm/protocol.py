@@ -261,10 +261,10 @@ def build_group_color(
     group_end: int,
     color_code: int,
 ) -> bytes:
-    """Build a group-addressed colour command.
+    """Build a group-addressed color command.
 
     Frames ears in the range [group_start, group_end] with the given
-    simple colour code (0x60-0x67). Each ear picks a random group id
+    simple color code (0x60-0x67). Each ear picks a random group id
     00-7F at power-up; this targets a contiguous slice.
 
     Format: 97 20 89 A0 <end> 26 <color> F2 <crc_hi> <crc_lo>
@@ -288,7 +288,7 @@ def build_group_palette(
     group_end: int,
     palette_index: int,
 ) -> bytes:
-    """Build a group-addressed palette colour command.
+    """Build a group-addressed palette color command.
 
     Like build_group_color but uses the mixed palette (0x0E XX).
     palette_index is 0x00-0x1D.

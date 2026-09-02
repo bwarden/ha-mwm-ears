@@ -2,7 +2,7 @@
 
 Implements the instruction-set tables from docs/mwm-show-protocol.md section
 4 plus the observed phrase templates (section 5): idle/demo beacons, static
-colour commands, effect invocations, timers/modifiers, group addressing, FEC
+color commands, effect invocations, timers/modifiers, group addressing, FEC
 countdowns, and 55 AA system messages.
 
 Sources of truth:
@@ -10,12 +10,12 @@ Sources of truth:
         verified by Thread and Park experiments.
     docs/mwm-show-protocol.md section 5  -- Wand/paintbrush phrase templates
         (96 19 gg kk vv tt ww cc) with known (gg, kk) pairs and static
-        colour template layout.
+        color template layout.
     samples/mwm-gwts-colors.tsv          -- Verified frame examples
         confirming beacon structure and palette command forms.
     DIYC forum post #259750 (oPossum)     -- Original frame measurements,
         palette RGB values, and wand-command decoding.
-    DIYC thread (jonfether, RobG, et al.) -- Simple colour opcodes, beacon
+    DIYC thread (jonfether, RobG, et al.) -- Simple color opcodes, beacon
         variants (park/live), companion block parsing.
 """
 
@@ -207,7 +207,7 @@ def _is_beacon(content: list[int] | bytes) -> bool:
 # Wand/paintbrush push phrases: `96 19 gg kk vv tt ww cc` (+CRC). The
 # (gg, kk) pair names the program; documented rows from the protocol
 # reference (docs/mwm-show-protocol.md, Calvin 2014 table). Static
-# colour templates additionally carry a palette byte `pp`.
+# color templates additionally carry a palette byte `pp`.
 WAND_PROGRAMS = {
     (0x0B, 0x36): "both yellow, dim/bright alternating",
     (0x0B, 0x12): "both green, dim/bright",
@@ -220,7 +220,7 @@ WAND_PROGRAMS = {
     (0x11, 0x12): "green L/R/off cycle",
 }
 
-# Static wand colour templates: fixed leading (gg, kk, length). Body
+# Static wand color templates: fixed leading (gg, kk, length). Body
 # layout: `96 19 gg kk 16 pp scope ..` -- pp at index 5, scope byte at
 # index 6 (even = both ears, odd = right-only).
 _WAND_STATIC = {
@@ -250,7 +250,7 @@ def _describe_wand(body: list[int]) -> dict:
         desc["palette"] = {"index": pp & 0x7F, "scope": scope}
         name = PALETTE.get(pp & 0x7F, ("unknown", None))[0]
         desc["summary"] = (
-            f"wand static colour: {name} ({scope} ears, shade {pp:#04x})"
+            f"wand static color: {name} ({scope} ears, shade {pp:#04x})"
         )
         return desc
     if known:
@@ -318,7 +318,7 @@ def describe_55aa(data: bytes) -> dict:
 
 
 def describe_bundle(frames: list[bytes]) -> dict | None:
-    """Recognise an A-B-A' command bundle (doc section 3).
+    """Recognize an A-B-A' command bundle (doc section 3).
 
     Wands, paintbrushes and ears transmit every command three times:
     [phrase][companion][phrase]. First and third carry the same command;
@@ -404,7 +404,7 @@ class EarStateTracker:
     Feeds decoded frames; tracks assumed per-ear colors and the running
     effect so diagnostic surfaces can answer "what mode are the lights in?".
     Beacon frames update the assumed running effect but never the colors,
-    since beacons describe autonomous demo behaviour rather than commands.
+    since beacons describe autonomous demo behavior rather than commands.
     """
 
     def __init__(self) -> None:
@@ -450,7 +450,7 @@ class EarStateTracker:
         ) if isinstance(frame, str) else bytes(frame)
         content = packed[1:-1]
 
-        # Two-opcode colour script: read per-slot for display. NOTE rig
+        # Two-opcode color script: read per-slot for display. NOTE rig
         # 2026-08-23: real ears execute these sequentially (last wins);
         # revisit if genuine traffic ever uses this shape.
         if len(content) == 2 and packed[0] & 0x0F == 1 and (
@@ -511,7 +511,7 @@ class EarStateTracker:
 
         # Right-only simple forms (`90 68..6F`, TSV color-X-right rows):
         # touch ONLY the right slot -- composing our own TX, we rely on
-        # the left ear keeping its colour through these.
+        # the left ear keeping its color through these.
         elif len(content) == 1 and 0x68 <= content[0] <= 0x6F:
             self._right = (
                 EAR_STATE_OFF if content[0] == 0x68

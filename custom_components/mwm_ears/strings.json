@@ -28,5 +28,17 @@
         }
       }
     }
+  },
+  "services": {
+    "select_color": {
+      "name": "Select exact color",
+      "description": "Sends one exact catalog color to the ears, bypassing color-wheel snapping so near-identical shades (simple 0x61 blue vs palette 0x04 pure blue) arrive as distinct commands. Takes a catalog name (\"lime green\", \"pure blue\") or a selector (\"simple:0x61\", \"palette:4\").",
+      "fields": {
+        "color": {
+          "name": "Color",
+          "description": "Catalog name or \"kind:value\" selector for the exact color to send."
+        }
+      }
+    }
   }
 }

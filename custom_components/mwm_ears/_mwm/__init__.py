@@ -9,8 +9,8 @@ Sources of truth (all in this repo):
     docs/mwm-show-protocol.md     -- protocol reference (framing, opcodes,
                                       effects table, wand phrase templates,
                                       beacon structure, timing rules).
-    samples/mwm-gwts-colors.tsv   -- rig-verified colour frames: simple
-                                      one-bit colours, 30-shade palette
+    samples/mwm-gwts-colors.tsv   -- rig-verified color frames: simple
+                                      one-bit colors, 30-shade palette
                                       RGB values, fused frames, bundle
                                       examples.  Original measurements by
                                       oPossum (DIYC forum post #259750);
