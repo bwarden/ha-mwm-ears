@@ -29,6 +29,7 @@ from .palette import (
     SIMPLE_COLOR_CODES,
     color_palette,
     nearest_entry,
+    parse_color,
 )
 from .protocol import (
     CARRIER_HZ,
@@ -84,6 +85,7 @@ __all__ = [
     "SIMPLE_COLOR_CODES",
     "EAR_STATE_OFF",
     "nearest_entry",
+    "parse_color",
     "color_palette",
     "EFFECT_LABELS",
     "EarStateTracker",

@@ -6,6 +6,7 @@ import _bootstrap  # noqa: F401  (must precede mwm imports)
 
 import unittest
 
+from mwm import parse_color as package_parse_color  # noqa: E402  (package re-export, as light.py imports)
 from mwm.palette import (
     PALETTE,
     SIMPLE_COLORS,
@@ -150,6 +151,12 @@ class NearestTests(unittest.TestCase):
         for spec in ["chartreuse", "simple:0xFF", "palette:40", "simple:", "bogus:3"]:
             with self.assertRaises(ValueError, msg=spec):
                 parse_color(spec)
+
+    def test_package_reexports_parse_color(self):
+        # light.py imports parse_color from the integration package __init__
+        # (not from mwm.palette); a missing re-export breaks every entry at
+        # setup with ImportError, so pin it here.
+        self.assertIs(package_parse_color, parse_color)
 
 
 class ColorPaletteTests(unittest.TestCase):
