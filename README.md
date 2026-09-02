@@ -179,8 +179,9 @@ title: My Ears
   override the detection. A side whose entity is neither configured nor
   detected is shown read-only.
 - The swatches come from the live `color_palette` entity attribute
-  (`python/.../_mwm/palette.py::color_palette`), so the card always shows
-  exactly the colors the integration can represent — no palette copy in JS.
+  (`custom_components/mwm_ears/_mwm/palette.py::color_palette`), so the card
+  always shows exactly the colors the integration can represent — no palette
+  copy in JS.
 
 ### Behavior
 
@@ -282,14 +283,15 @@ this environment). The vendored library and the pure state logic in
 are fully unit-tested; the HA platform modules are syntax-checked.
 
 ```
-make test-python   # from repo root, or:
-cd python && PYTHONPATH=. python3 -m unittest discover -s tests -v
+make test    # build + run the stdlib unit suite, or:
+PYTHONPATH=. python3 -m unittest discover -s tests -v
+make dist    # rebuild dist/mwm_ears.zip for manual HA deploy
 ```
 
 | Path | Purpose |
 |------|---------|
-| `_mwm/` | protocol library (framing, timings codec, decoder, palette) |
-| `ears.py` | pure state logic: pair desired-state, refresh/suspend rules, observed-traffic hub |
+| `custom_components/mwm_ears/_mwm/` | protocol library (framing, timings codec, decoder, palette) |
+| `custom_components/mwm_ears/ears.py` | pure state logic: pair desired-state, refresh/suspend rules, observed-traffic hub |
 | `tests/` | unittest suite for both |
 | remaining modules | HA glue: config flow, light/sensor/switch platforms |
 
@@ -299,71 +301,31 @@ everything testable without homeassistant installed.
 
 ## Rig research tools
 
-The rig research tools under `../tools/` drive and analyse real ears on
-the MQTT test rig, standalone (no Home Assistant). Full documentation is
-in `../README.md`; the shared `_bootstrap.py` / `_mqtt.py` helpers and
-their usage are described there. The set includes interactive senders,
-beacon capture/analysis, color-cycle testing, and offline log decoding.
+This repo is the self-contained Home Assistant integration. The interactive
+**rig research tools** (which drive and analyse real ears directly over MQTT
+with no Home Assistant) live in the sibling `ir-remote-tools` monorepo under
+its `tools/` directory — see that repo's README (`./tools/` and `docs/`) for
+the senders, beacon capture/analysis, color-cycle testing, and offline log
+decoding, plus the shared `_bootstrap.py` / `_mqtt.py` helpers. They share
+the same `_mwm` protocol library vendored here under
+`custom_components/mwm_ears/_mwm/`.
 
-### color cycle test (`../tools/color_cycle.py`)
+### color cycle test (`tools/color_cycle.py`)
 
 Sends every simple color, palette shade, composite frame, and built-in
 effect one at a time via MQTT (Tasmota IRsend), prompting for free-form
 notes after each command. Results are logged to a JSON file for later
-analysis.
+analysis. `--effects` runs a per-effect issuance-method probe instead.
 
-Each command is sent **3 times** (configurable) with a short delay
-between repeats so the human observer does not miss the change on real
-ears.
-
-```
-python3 ../tools/color_cycle.py                       # defaults: repeat=3, delay=0.3s
-python3 ../tools/color_cycle.py --repeat 5 --repeat-delay 0.5
-python3 ../tools/color_cycle.py --log session.json
-```
-
-| Flag | Default | Description |
-|------|---------|-------------|
-| `--log FILE` | `color_cycle_YYYYMMDD_HHMMSS.json` | Output log path |
-| `--mqtt-json PATH` | `~/.config/ir-remote-tools/mqtt.json` | MQTT config |
-| `--repeat N` | `3` | Send each command N times for human visibility |
-| `--repeat-delay SECS` | `0.3` | Seconds between repeated sends |
-
-The log is a JSON object with an `entries` array; each entry has `t`,
-`kind`, `name`, `hex`, `payload`, `repeat`, and `notes` fields.
-
-### offline analysis (`../tools/analyze_log.py`)
+### offline analysis (`tools/analyze_log.py`)
 
 Parses a log produced by `color_cycle.py` (or a manually assembled
-equivalent) and attempts to **decipher every observed command**. Emits a
-structured analysis log with full decoding where possible, or a note
-that the command could not be fully decoded.
+equivalent) and attempts to **decipher every observed command** — full
+decoding where possible, or a note that the command could not be fully
+decoded.
 
-Supports three input modes:
-
-- `--log FILE` -- a JSON log from `color_cycle.py`
-- `--frames FILE` -- plain-text hex frame strings, one per line
-  (blank lines and `#` comments ignored)
-- `--timings FILE` -- a JSON file containing a top-level list of
-  integer timing arrays (each in microseconds, as received from the
-  Tasmota MQTT receiver topic)
-
-```
-python3 ../tools/analyze_log.py --log color_cycle.json
-python3 ../tools/analyze_log.py --log color_cycle.json --format json --out analysis.json
-python3 ../tools/analyze_log.py --frames captures.txt
-python3 ../tools/analyze_log.py --timings raw_captures.json --format text
-```
-
-| Flag | Default | Description |
-|------|---------|-------------|
-| `--log FILE` | | JSON log from `color_cycle.py` |
-| `--frames FILE` | | Plain-text hex frame strings |
-| `--timings FILE` | | JSON timing arrays |
-| `--format text\|json` | `text` | Output format |
-| `--out FILE` | stdout | Output file |
-
-Each record in the output contains the raw input, decoded frame
-description (kind, summary, tokens), and bundle analysis where
-applicable. Commands that cannot be decoded are flagged with
-`[NO DECODE]` or `[INVALID]` so they are easy to find in a long session.
+**Run both from the sibling `ir-remote-tools` repo**, where they live at
+`tools/` alongside the shared `_mqtt.py` / `_bootstrap.py` helpers; the
+flag tables and usage are documented in that repo's README and
+`docs/`. They share the same `mwm` protocol library vendored here under
+`custom_components/mwm_ears/_mwm/`.
