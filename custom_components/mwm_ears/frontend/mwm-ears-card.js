@@ -82,13 +82,20 @@ class MwmEarsCard extends HTMLElement {
     }).join("|");
   }
 
+  // Section key -> entity id. "entity" is the Both config entity; the side
+  // sections key into _sides (left/right), which holds the configured
+  // entity or the auto-detected sibling. _sides does NOT use the
+  // "left_entity"/"right_entity" config names, so lookups must translate.
+  _entityOf(key) {
+    if (key === "entity") return (this._config && this._config.entity) || "";
+    const side = key === "left_entity" ? "left"
+      : key === "right_entity" ? "right" : key;
+    return (this._sides && this._sides[side]) || "";
+  }
+
   _stateOf(key) {
-    if (key === "entity") {
-      const id = this._config && this._config.entity;
-      return id && this._hass ? this._hass.states[id] : undefined;
-    }
-    const sideId = this._sides && this._sides[key];
-    return sideId && this._hass ? this._hass.states[sideId] : undefined;
+    const id = this._entityOf(key);
+    return id && this._hass ? this._hass.states[id] : undefined;
   }
 
   // Left/right entities for this card: explicit config wins, otherwise the
@@ -195,9 +202,7 @@ class MwmEarsCard extends HTMLElement {
 
     const state = this._stateOf(sideKey);
     const catalog = this._palette(state, bothState);
-    const entityId = (sideKey === "entity")
-      ? (this._config && this._config.entity)
-      : (this._sides && this._sides[sideKey]);
+    const entityId = this._entityOf(sideKey);
 
     const grid = document.createElement("div");
     grid.className = "swatches";

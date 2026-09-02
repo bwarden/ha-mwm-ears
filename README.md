@@ -148,7 +148,7 @@ integration logs the exact URL at startup):
 
 ```yaml
 resources:
-  - url: /custom_components/mwm_ears/frontend/mwm-ears-card.js?v=0.7.4
+  - url: /custom_components/mwm_ears/frontend/mwm-ears-card.js?v=<version>
     type: module
 ```
 
