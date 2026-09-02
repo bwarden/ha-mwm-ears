@@ -395,20 +395,16 @@ class MwmEarsCardEditor extends HTMLElement {
       if (this._config[key]) continue; // keep user-chosen values
       const state = this._hass.states[this._config[key] || ""];
       if (state) continue;
-      const options = input.list && input.list.options;
-      if (options) options.length = 0;
-      if (input.list && options) {
-        const add = (value, text) => {
-          const o = document.createElement("option");
-          o.value = value;
-          o.textContent = text;
-          options.add(o);
-        };
-        for (const ls of lights) {
-          add(ls.entity_id, ls.attributes.friendly_name || ls.entity_id);
-        }
-        input.value = this._config[key] || "";
+      const list = input.list;
+      if (!list) continue;
+      list.replaceChildren();
+      for (const ls of lights) {
+        const o = document.createElement("option");
+        o.value = ls.entity_id;
+        o.textContent = ls.attributes.friendly_name || ls.entity_id;
+        list.appendChild(o);
       }
+      input.value = this._config[key] || "";
     }
   }
 
