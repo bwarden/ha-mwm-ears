@@ -130,14 +130,27 @@ and effect invocation are all handled by the integration).
 ### Install
 
 The card ships inside the integration and is served straight from its install
-path, so installing the component is enough — no manual copy into `www/`.
+path, so installing the component is enough — no manual copy into `www/` and
+no separate resource registration:
 
 1. Install the integration (HACS, or unpack the release zip into
    `custom_components/mwm_ears/`) and restart HA.
-2. Register the served card as a Lovelace resource: **Settings → Dashboards →
-   Resources → Add**, in *URL* mode pointing at
-   `/custom_components/mwm_ears/frontend/mwm-ears-card.js` (type `module`).
-   *(YAML:* add the same URL to `resources:`.*)
+2. Nothing else. On storage-mode dashboards (the default) the integration
+   registers the card module itself as a Lovelace resource, using a card URL
+   versioned with the integration version
+   (`…/mwm-ears-card.js?v=<version>`). When an updated integration is
+   installed the registered URL changes, so the frontend fetches the new card
+   instead of serving a stale one from the browser/app cache.
+
+*YAML-only resource mode:* an integration cannot edit YAML resources. Add the
+entry by hand, using a `?v=` suffix matching your installed version (the
+integration logs the exact URL at startup):
+
+```yaml
+resources:
+  - url: /custom_components/mwm_ears/frontend/mwm-ears-card.js?v=0.7.4
+    type: module
+```
 
 If static serving is unavailable on your install (the log prints a warning),
 fall back to copying `frontend/mwm-ears-card.js` into your HA `www/`

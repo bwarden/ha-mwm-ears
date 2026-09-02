@@ -523,8 +523,12 @@ class MwmEarsCardEditor extends HTMLElement {
   }
 }
 
-customElements.define(MWM_CARD_TAG, MwmEarsCard);
-customElements.define(MWM_EDITOR_TAG, MwmEarsCardEditor);
+if (!customElements.get(MWM_CARD_TAG)) {
+  customElements.define(MWM_CARD_TAG, MwmEarsCard);
+}
+if (!customElements.get(MWM_EDITOR_TAG)) {
+  customElements.define(MWM_EDITOR_TAG, MwmEarsCardEditor);
+}
 
 window.customCards = window.customCards || [];
 window.customCards.push({

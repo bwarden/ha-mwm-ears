@@ -31,8 +31,16 @@ from pathlib import Path
 
 from homeassistant.components import infrared
 from homeassistant.components.http import StaticPathConfig
-from homeassistant.config_entries import ConfigEntry
-from homeassistant.const import STATE_UNAVAILABLE, STATE_UNKNOWN
+from homeassistant.components.lovelace.const import (
+    CONF_RESOURCE_TYPE_WS,
+    DOMAIN as LL_DOMAIN,
+)
+from homeassistant.components.lovelace.resources import (
+    ResourceStorageCollection,
+    ResourceYAMLCollection,
+)
+from homeassistant.config_entries import ConfigEntry, ConfigEntryState
+from homeassistant.const import CONF_URL, STATE_UNAVAILABLE, STATE_UNKNOWN
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.exceptions import ConfigEntryNotReady
 from homeassistant.helpers.event import (
@@ -48,6 +56,7 @@ from .const import (
     CONF_RECEIVER_ENTITY,
     DOMAIN,
     HUB_KEY,
+    INTEGRATION_VERSION,
     REPEAT_GAP_S,
 )
 from .ears import (
@@ -134,7 +143,17 @@ def _entity_discovered(hass: HomeAssistant, entity_id: str | None) -> bool:
 
 
 _CARD_FRONTEND_URL = "/custom_components/mwm_ears/frontend"
+# Module URL with the integration version as a cache buster. The Lovelace
+# module loader and browsers key on the URL, so an unversioned entry keeps
+# serving a stale bundled card after an update; bumping the version changes
+# the URL and forces a fresh fetch (_sync_card_resource rewrites the
+# registered resource whenever the version changes).
+_CARD_MODULE_URL = f"{_CARD_FRONTEND_URL}/mwm-ears-card.js?v={INTEGRATION_VERSION}"
 _cards_registered = False
+
+_CARD_RESOURCE_LOCK = "card_resource_lock"
+_CARD_RESOURCE_DONE = "card_resource_done"
+_CARD_RESOURCE_BY_US = "card_resource_by_us"
 
 
 async def _serve_frontend(hass: HomeAssistant) -> None:
@@ -145,6 +164,10 @@ async def _serve_frontend(hass: HomeAssistant) -> None:
     and setup must never fail because serving the card failed -- the README
     documents the www/ fallback for installs where static registration is
     unavailable.
+
+    cache_headers=False keeps the file out of the long-lived HTTP cache so
+    the card's versioned module URL decides freshness: a replaced file is
+    re-validated on the next fetch instead of pinning the previous card.
     """
     global _cards_registered
     if _cards_registered:
@@ -154,7 +177,7 @@ async def _serve_frontend(hass: HomeAssistant) -> None:
         await hass.http.async_register_static_paths(
             [
                 StaticPathConfig(
-                    _CARD_FRONTEND_URL, str(frontend_dir), cache_headers=True
+                    _CARD_FRONTEND_URL, str(frontend_dir), cache_headers=False
                 )
             ]
         )
@@ -168,11 +191,100 @@ async def _serve_frontend(hass: HomeAssistant) -> None:
         _cards_registered = True
 
 
+async def _sync_card_resource(hass: HomeAssistant) -> None:
+    """Register the card module as a Lovelace resource, replacing stale ones.
+
+    Storage-mode dashboards (the default) get the versioned _CARD_MODULE_URL
+    as a ``module`` resource automatically -- no manual Resources step and no
+    HACS-style helper. Any earlier entry pointing at the same unversioned or
+    older mwm-ears-card.js path is replaced, which is what evicts a stale
+    card after an update. YAML-mode resources cannot be edited from here, so
+    that mode is pointed at the URL to add by hand instead.
+    """
+    resources = getattr(hass.data.get(LL_DOMAIN), "resources", None)
+    if resources is None:
+        _LOGGER.debug(
+            "Lovelace not loaded yet; card resource registration deferred "
+            "to the next setup"
+        )
+        return
+    if isinstance(resources, ResourceYAMLCollection):
+        if not any(
+            item.get(CONF_URL) == _CARD_MODULE_URL
+            for item in resources.async_items()
+        ):
+            _LOGGER.warning(
+                "Card resources are in YAML mode, which the integration "
+                "cannot edit; add this entry to your lovelace resources:\n"
+                '  - url: "%s"\n    type: module',
+                _CARD_MODULE_URL,
+            )
+        return
+    if not resources.loaded:
+        await resources.async_load()
+        resources.loaded = True
+    items = resources.async_items()
+    if any(item.get(CONF_URL) == _CARD_MODULE_URL for item in items):
+        return
+    for item in items:
+        if item.get(CONF_URL, "").startswith(
+            f"{_CARD_FRONTEND_URL}/mwm-ears-card.js"
+        ):
+            await resources.async_delete_item(item[CONF_ID])
+    created = await resources.async_create_item(
+        {CONF_RESOURCE_TYPE_WS: "module", CONF_URL: _CARD_MODULE_URL}
+    )
+    hass.data[DOMAIN][_CARD_RESOURCE_BY_US] = True
+    _LOGGER.info(
+        "Registered the MWM Ears card for dashboards (%s)", created[CONF_URL],
+    )
+
+
+async def _ensure_card_resource(hass: HomeAssistant) -> None:
+    """Run _sync_card_resource once per process without failing setup."""
+    if hass.data[DOMAIN].get(_CARD_RESOURCE_DONE):
+        return
+    async with hass.data[DOMAIN].setdefault(_CARD_RESOURCE_LOCK, asyncio.Lock()):
+        if hass.data[DOMAIN].get(_CARD_RESOURCE_DONE):
+            return
+        try:
+            await _sync_card_resource(hass)
+        except Exception:  # noqa: BLE001 - setup must still succeed
+            _LOGGER.exception("Failed to register the MWM Ears card resource")
+        finally:
+            hass.data[DOMAIN][_CARD_RESOURCE_DONE] = True
+
+
+async def _cleanup_card_resource(hass: HomeAssistant) -> None:
+    """Drop the card resource we registered once the last entry unloads."""
+    try:
+        if not hass.data[DOMAIN].get(_CARD_RESOURCE_BY_US):
+            return
+        resources = getattr(hass.data.get(LL_DOMAIN), "resources", None)
+        if isinstance(resources, ResourceStorageCollection):
+            if not resources.loaded:
+                await resources.async_load()
+                resources.loaded = True
+            for item in resources.async_items():
+                if item.get(CONF_URL) == _CARD_MODULE_URL:
+                    await resources.async_delete_item(item[CONF_ID])
+        # Un-done, so a later setup re-registers the module.
+        hass.data[DOMAIN].pop(_CARD_RESOURCE_DONE, None)
+        hass.data[DOMAIN].pop(_CARD_RESOURCE_BY_US, None)
+    except Exception:  # noqa: BLE001
+        _LOGGER.exception("Failed to remove the MWM Ears card resource")
+
+
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     emitter_entity = entry.data.get(CONF_EMITTER_ENTITY)
     receiver_entity = entry.data.get(CONF_RECEIVER_ENTITY)
 
+    # Shared runtime dict must exist before _ensure_card_resource writes into
+    # it (e.g. the _CARD_RESOURCE_BY_US marker).
+    hass.data.setdefault(DOMAIN, {})
+
     await _serve_frontend(hass)
+    await _ensure_card_resource(hass)
 
     # MQTT-discovered IR entities often appear AFTER our entry is set up at
     # boot.  If the entity has not been discovered at all (state is None),
@@ -189,7 +301,6 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             f"infrared entities not yet discovered: {', '.join(missing)}"
         )
 
-    hass.data.setdefault(DOMAIN, {})
     hub = _get_hub(hass)
     runtime: dict = {"pair": None, "rx": None}
     hass.data[DOMAIN][entry.entry_id] = runtime
@@ -399,4 +510,12 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         # async_on_unload hooks already cancelled timers/subscriptions and
         # detached transmitter pairs from the hub.
         hass.data[DOMAIN].pop(entry.entry_id, None)
+    if not any(
+        other.entry_id != entry.entry_id
+        and other.state is ConfigEntryState.LOADED
+        for other in hass.config_entries.async_entries(
+            DOMAIN, include_disabled=False, include_ignore=False
+        )
+    ):
+        await _cleanup_card_resource(hass)
     return unload_ok
