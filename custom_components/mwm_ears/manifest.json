@@ -8,11 +8,11 @@
   "dependencies": [
     "infrared"
   ],
-  "documentation": "https://github.com/bwarden/ir-remote-tools",
+  "documentation": "https://github.com/bwarden/ha-mwm-ears",
   "homeassistant": "2026.4.0",
   "integration_type": "hub",
   "iot_class": "local_push",
-  "issue_tracker": "https://github.com/bwarden/ir-remote-tools/issues",
+  "issue_tracker": "https://github.com/bwarden/ha-mwm-ears/issues",
   "requirements": [
     "infrared-protocols"
   ],

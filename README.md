@@ -1,5 +1,7 @@
 # Home Assistant integration: `mwm_ears`
 
+[![HACS](https://img.shields.io/badge/HACS-Custom-41BDF5.svg)](https://github.com/bwarden/ha-mwm-ears)
+
 Controls Disney "Made With Magic" / Glow With The Show ears through Home
 Assistant's **infrared entity platform** (HA 2026.4+). Requires at least
 one infrared proxy configured in HA (e.g. an ESPHome IR/RF proxy); the
@@ -18,7 +20,20 @@ palette tables, phrase decoder, timing codec). The only external
 requirement is `infrared-protocols`, pulled in via the manifest for the
 framework's `Command` envelope type; MWM support itself lives here.
 
-## Install
+## Install via HACS
+
+[![Open your Home Assistant instance and open a repository inside the Home Assistant Community Store.](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=bwarden&repository=ha-mwm-ears&category=integration)
+
+1. In HACS, add `https://github.com/bwarden/ha-mwm-ears` as a **custom
+   repository** (category: **Integration**), then install it.
+2. Restart Home Assistant.
+3. Add a room via Settings -> Devices & Services -> Add Integration ->
+   "MWM Ears".
+
+The bundled Lovelace card is served and registered automatically (see
+[Lovelace card](#lovelace-card)); no dashboard Resources step is needed.
+
+## Install manually
 
 Unpack the distribution into your HA config directory:
 
@@ -298,6 +313,17 @@ make dist    # rebuild dist/mwm_ears.zip for manual HA deploy
 `tests/_bootstrap.py` loads `_mwm` standalone by path, and `ears.py`
 falls back to the same alias when loaded outside a package, keeping
 everything testable without homeassistant installed.
+
+### Releases & versioning
+
+HACS pulls the version from the latest git tag (prefixed `v`, e.g.
+`v0.7.7`). A release: tag the commit `v<version>`, push the tag; the
+`Release` workflow validates the tag matches both `manifest.json`'s
+`version` and `const.py`'s `INTEGRATION_VERSION`, runs `make test`, builds
+`dist/mwm_ears.zip`, and attaches it to the release. Bumping a version for
+a card-visible change is required so the registered card URL
+(`/custom_components/mwm_ears/frontend/mwm-ears-card.js?v=<version>`)
+cache-busts and the frontend picks up the new card.
 
 ## Rig research tools
 
