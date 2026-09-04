@@ -1,0 +1,121 @@
+# Tasmota IR sender/receiver pair wired into Home Assistant's built-in IR
+# `infrared` platform.  For each Tasmota device that carries an IR emitter
+# (schema "emitter") or an IR receiver (schema "receiver"), add one entry.
+#
+# Replace every `AA:BB:CC:DD:EE:FF` / `XXXXXX` below with your device's real
+# MAC address and Tasmota device id.  The device id is the suffix Tasmota
+# uses in its MQTT topics (for example `tele/tasmota/XXXXXX/RESULT`).
+#
+# The command_template / value_template are Tasmota's `raw` IR codec, which
+# talks signed-microsecond pulse runs, converted to/from the absolute
+# magnitudes HA's `infrared` platform expects.
+infrared:
+  - name: "MWM IR transmitter"
+    schema: "emitter"
+    icon: mdi:ab-testing
+    unique_id: infrared_tasmota_XXMACXX_tx
+    device:
+      connections:
+        - ["mac", "AA:BB:CC:DD:EE:FF"]
+    availability:
+      topic: "tele/tasmota/XXXXXX/LWT"
+      payload_available: Online
+      payload_not_available: Offline
+    command_topic: "cmnd/tasmota/XXXXXX/IRsend"
+    # command_template: "raw,{{ modulation }},{{ timings }}"
+    command_template: >-
+      {% set req = value_json if value_json is defined and value_json != None else value | from_json %}
+      {% set ns = namespace(abs_timings=[]) %}
+    
+      {# Convert signed microsecond timings to absolute positive pulse durations #}
+      {% for t in req.timings %}
+        {% set ns.abs_timings = ns.abs_timings + [t | abs] %}
+      {% endfor %}
+    
+      {# Format fields for Tasmota IRSend RAW payload #}
+      {% set raw_str = ns.abs_timings | join(',') %}
+      {% set freq = ((req.modulation | default(38000)) / 1000) | int %}
+      {% set repeat = req.repeat_count | default(0) | int %}
+      {% if freq == 38 %}0{% else %}{{ freq }}{% endif %},{{ raw_str }}
+  - name: "MWM IR receiver"
+    schema: "receiver"
+    icon: mdi:ab-testing
+    unique_id: infrared_tasmota_XXMACXX_rx
+    device:
+      connections:
+        - ["mac", "AA:BB:CC:DD:EE:FF"]
+    availability:
+      topic: "tele/tasmota/XXXXXX/LWT"
+      payload_available: Online
+      payload_not_available: Offline
+    state_topic: "tele/tasmota/XXXXXX/RESULT"
+    # value_template: '{% if value_json is defined and "IrReceived" in value_json and "RawData" in value_json.IrReceived %}{"timings":{{ value_json.IrReceived.RawData.split("+") }}}{% else %}{"timings":[]}{% endif %}'
+    value_template: >-
+      {% set raw = value_json.IrReceived.RawData %}
+      {% set ns = namespace(
+        tokens=[],
+        lookup=[],
+        curr_sign="+",
+        curr_num=""
+      ) %}
+    
+      {# Step 1: Parse string into tokens & maintain a single lookup table of unique magnitudes #}
+      {% for char in raw %}
+        {% if char in ['+', '-'] %}
+          {% if ns.curr_num != "" %}
+            {% set magnitude = ns.curr_num | int %}
+            {% set val = magnitude if ns.curr_sign == "+" else -magnitude %}
+            {% set ns.tokens = ns.tokens + [val] %}
+            {% if magnitude not in ns.lookup %}
+              {% set ns.lookup = ns.lookup + [magnitude] %}
+            {% endif %}
+            {% set ns.curr_num = "" %}
+          {% endif %}
+          {% set ns.curr_sign = char %}
+        {% elif char in '0123456789' %}
+          {% set ns.curr_num = ns.curr_num ~ char %}
+        {% else %}
+          {% if ns.curr_num != "" %}
+            {% set magnitude = ns.curr_num | int %}
+            {% set val = magnitude if ns.curr_sign == "+" else -magnitude %}
+            {% set ns.tokens = ns.tokens + [val] %}
+            {% if magnitude not in ns.lookup %}
+              {% set ns.lookup = ns.lookup + [magnitude] %}
+            {% endif %}
+            {% set ns.curr_num = "" %}
+          {% endif %}
+          {% set ns.tokens = ns.tokens + [char] %}
+        {% endif %}
+      {% endfor %}
+    
+      {% if ns.curr_num != "" %}
+        {% set magnitude = ns.curr_num | int %}
+        {% set val = magnitude if ns.curr_sign == "+" else -magnitude %}
+        {% set ns.tokens = ns.tokens + [val] %}
+        {% if magnitude not in ns.lookup %}
+          {% set ns.lookup = ns.lookup + [magnitude] %}
+        {% endif %}
+      {% endif %}
+    
+      {# Step 2: Resolve character references using magnitude lookup and letter case sign rules #}
+      {% set alpha_upper = "ABCDEFGHIJKLMNOPQRSTUVWXYZ" %}
+      {% set alpha_lower = "abcdefghijklmnopqrstuvwxyz" %}
+      {% set expanded = namespace(timings=[]) %}
+    
+      {% for t in ns.tokens %}
+        {% if t is integer %}
+          {% set expanded.timings = expanded.timings + [t] %}
+        {% elif t in alpha_upper %}
+          {% set idx = alpha_upper.find(t) %}
+          {% if idx < ns.lookup | length %}
+            {% set expanded.timings = expanded.timings + [ns.lookup[idx]] %}
+          {% endif %}
+        {% elif t in alpha_lower %}
+          {% set idx = alpha_lower.find(t) %}
+          {% if idx < ns.lookup | length %}
+            {% set expanded.timings = expanded.timings + [-(ns.lookup[idx])] %}
+          {% endif %}
+        {% endif %}
+      {% endfor %}
+    
+      {{ {"timings": expanded.timings} | to_json }}
