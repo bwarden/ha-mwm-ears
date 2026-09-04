@@ -69,7 +69,7 @@ set_state:
           options:
             - Fade out
             - Fade up
-            - Slow even pulse
+            - Single flash
             - Pulse
             - Strobe flash
             - Hard transitions

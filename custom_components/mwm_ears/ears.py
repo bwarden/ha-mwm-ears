@@ -96,12 +96,16 @@ _LOGGER = logging.getLogger(__name__)
 RIGHT_ONLY_BASE = 0x68
 
 # Effect programs that need a `58` cycle-timer companion in the SAME phrase
-# to run at all (docs/mwm-show-protocol.md section 4): `48 03`/`48 04` are
-# the rig-verified pulse pair that "require `58 F0`" -- without it they do
-# nothing or degrade.  The palette of `58 tt` is the ~100 ms/count cycle
-# (> `58 F0` = special fast pulse), driven by the companion byte below.
+# to run at all (docs/mwm-show-protocol.md section 4): `48 04` is the
+# rig-verified pulse that "requires `58 F0`"; without the companion it
+# degrades.  The palette of `58 tt` is the ~100 ms/count cycle (> `58 F0` =
+# special fast pulse), driven by the companion byte below.
+#
+# `0x03` (slow even pulse) is deliberately NOT here: a state-settling dig
+# probe (2026-09-03) showed `48 03 58 F0` followed by a color is fatal
+# (nothing happens), whereas plain `48 03` + color runs the effect.  So only
+# `0x04` gets the companion on an HA send.
 _EFFECT_CYCLE_COMPANION: dict[int, int] = {
-    0x03: 0xF0,  # slow even pulse
     0x04: 0xF0,  # pulse
 }
 

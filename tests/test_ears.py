@@ -104,6 +104,21 @@ class ApplyTests(unittest.TestCase):
         self.assertEqual(h.pair.codes["left"], 0x65)
         self.assertEqual(h.pair.codes["right"], 0x65)
 
+    def test_effect_slow_even_pulse_has_no_companion(self):
+        # Dig probe (2026-09-03): `48 03 58 F0` + color is fatal (nothing
+        # runs), while plain `48 03` + color works.  So 0x03 must NOT get the
+        # 58 companion that 0x04 Pulse does.
+        h = Harness()
+        run(h.pair.apply_effect(
+            0x03, "Single flash",
+            left=("simple", 0x67), right=("simple", 0x67),
+        ))
+        effect = bytes.fromhex(h.calls[0][0])
+        # 48 03, then the seed color as the second frame.
+        self.assertEqual(list(effect[1:-1]), [0x48, 0x03])
+        color = bytes.fromhex(h.calls[1][0])
+        self.assertEqual(list(color[1:-1]), [0x67])
+
 
 class TurnOnRestoreTests(unittest.TestCase):
     def test_fresh_pair_defaults_to_white(self):

@@ -58,7 +58,7 @@ EFFECT_LABELS: dict[int, str] = {
 LIGHT_EFFECTS: dict[str, int] = {
     "Fade out": 0x85,
     "Fade up": 0x86,
-    "Slow even pulse": 0x03,
+    "Single flash": 0x03,
     "Pulse": 0x04,
     "Strobe flash": 0x84,
     "Hard transitions": 0x82,
