@@ -49,12 +49,12 @@ EFFECT_LABELS: dict[int, str] = {
     0x86: "fade up",
 }
 
-# Curated effect catalog surfaced to Home Assistant (light.py effect_list,
-# the set_state action's effect selector): HA-facing labels mapped to the
-# stored effect program indices.  A superset of EFFECT_LABELS -- the added
-# demo-mode indices (0x00..0x1F plus 0x82..0x86) are rig-verified entry
-# points into the built-in show programs (docs/mwm-show-protocol.md
-# section 4, [T]hread/[P]ark verified).
+# Curated effect catalog surfaced to Home Assistant (in the mwm_ears HA
+# repo: light.py effect_list, the set_state action's effect selector):
+# HA-facing labels mapped to the stored effect program indices.  A superset
+# of EFFECT_LABELS -- the added demo-mode indices (0x00..0x1F plus 0x82..0x86)
+# are rig-verified entry points into the built-in show programs
+# (docs/mwm-show-protocol.md section 4, [T]hread/[P]ark verified).
 LIGHT_EFFECTS: dict[str, int] = {
     "Fade out": 0x85,
     "Fade up": 0x86,
@@ -68,6 +68,27 @@ LIGHT_EFFECTS: dict[str, int] = {
     "Quick four-color rotation": 0x08,
     "Random effect": 0x00,
     "Blackout": 0x1F,
+}
+
+# The 58 tt cycle-timer companion an effect program needs in the SAME
+# phrase to run at all (docs/mwm-show-protocol.md section 4): ``48 04`` is
+# the rig-verified pulse that "requires `58 F0`"; without the companion it
+# degrades.  ``48 03`` (Single flash) deliberately has NO companion: a
+# state-settling dig probe (2026-09-03) showed ``48 03 58 F0`` followed by a
+# color is fatal (nothing runs), whereas plain ``48 03`` + color works.  So
+# only ``0x04`` gets a companion.
+EFFECT_COMPANION: dict[int, int] = {
+    0x04: 0xF0,  # Pulse
+}
+
+# Full effect catalog for integration consumers: each HA-facing effect name
+# maps to its stored program index plus the `58` companion byte it needs
+# (None when no companion is required).  This is the single source of truth
+# both services.yaml and the light platform's effect_list draw from, so the
+# effect list and its framing requirements never live in the integration.
+EFFECTS: dict[str, dict] = {
+    name: {"index": index, "companion": EFFECT_COMPANION.get(index)}
+    for name, index in LIGHT_EFFECTS.items()
 }
 
 

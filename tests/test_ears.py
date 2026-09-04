@@ -2,6 +2,9 @@
 
 import unittest
 
+import _bootstrap  # noqa: F401  (must precede mwm imports)
+
+import mwm
 from mwm import build_frame
 
 # Load ears.py without importing the integration package (its __init__
@@ -118,6 +121,15 @@ class ApplyTests(unittest.TestCase):
         self.assertEqual(list(effect[1:-1]), [0x48, 0x03])
         color = bytes.fromhex(h.calls[1][0])
         self.assertEqual(list(color[1:-1]), [0x67])
+
+    def test_effect_companion_comes_from_library_catalogue(self):
+        # The integration must not re-derive effect framing; it drives the
+        # 58 companion straight from mwm.EFFECT_COMPANION (single source of
+        # truth in the protocol library).  Guard that centralization.
+        self.assertEqual(ears.EFFECT_COMPANION, mwm.EFFECT_COMPANION)
+        self.assertEqual(mwm.EFFECT_COMPANION, {0x04: 0xF0})
+        self.assertEqual(mwm.EFFECTS["Pulse"]["companion"], 0xF0)
+        self.assertIsNone(mwm.EFFECTS["Single flash"]["companion"])
 
 
 class TurnOnRestoreTests(unittest.TestCase):

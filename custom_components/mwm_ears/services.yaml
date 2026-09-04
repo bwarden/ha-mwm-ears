@@ -67,6 +67,7 @@ set_state:
       selector:
         select:
           options:
+# MWM-EFFECT-OPTIONS
             - Fade out
             - Fade up
             - Single flash
@@ -79,3 +80,4 @@ set_state:
             - Quick four-color rotation
             - Random effect
             - Blackout
+# MWM-EFFECT-OPTIONS

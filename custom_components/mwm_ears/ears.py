@@ -14,9 +14,15 @@ import time
 
 if __package__:  # normal HA component context
     from ._mwm import (
+        DEFAULT_COLOR_CODE,
+        EAR_OFF_CODE,
+        RESET_OPCODE,
+        RIGHT_ONLY_BASE,
         EAR_STATE_OFF,
         PALETTE,
         SIMPLE_COLORS,
+        EFFECTS,
+        EFFECT_COMPANION,
         EarStateTracker,
         build_frame,
         describe_bundle,
@@ -26,9 +32,15 @@ if __package__:  # normal HA component context
     )
 else:  # standalone test harness: _bootstrap registers us as "mwm"
     from mwm import (
+        DEFAULT_COLOR_CODE,
+        EAR_OFF_CODE,
+        RESET_OPCODE,
+        RIGHT_ONLY_BASE,
         EAR_STATE_OFF,
         PALETTE,
         SIMPLE_COLORS,
+        EFFECTS,
+        EFFECT_COMPANION,
         EarStateTracker,
         build_frame,
         describe_bundle,
@@ -40,15 +52,6 @@ else:  # standalone test harness: _bootstrap registers us as "mwm"
 BOTH = "both"
 LEFT = "left"
 RIGHT = "right"
-
-EAR_OFF_CODE = 0x60
-RESET_OPCODE = 0x24   # flow-control override (doc section 4)
-DEFAULT_COLOR_CODE = 0x67  # white
-
-# Rig-verified palette template (samples/mwm-gwts-colors.tsv rows
-# "palette-XX-both"): sets palette color pp on both ears simultaneously.
-_PALETTE_TEMPLATE = [0x19, 0x07, 0x0F, 0x16]
-_PALETTE_TEMPLATE_TAIL = [0x18, 0x04]
 
 # Extra transmissions per logical command beyond the first, sent IMMEDIATELY
 # back-to-back (the frames' footers space them; no pause between repeats so
@@ -93,21 +96,12 @@ ENFORCE_OFF_INTERVAL_S = 90
 
 _LOGGER = logging.getLogger(__name__)
 
-RIGHT_ONLY_BASE = 0x68
-
-# Effect programs that need a `58` cycle-timer companion in the SAME phrase
-# to run at all (docs/mwm-show-protocol.md section 4): `48 04` is the
-# rig-verified pulse that "requires `58 F0`"; without the companion it
-# degrades.  The palette of `58 tt` is the ~100 ms/count cycle (> `58 F0` =
-# special fast pulse), driven by the companion byte below.
-#
-# `0x03` (slow even pulse) is deliberately NOT here: a state-settling dig
-# probe (2026-09-03) showed `48 03 58 F0` followed by a color is fatal
-# (nothing happens), whereas plain `48 03` + color runs the effect.  So only
-# `0x04` gets the companion on an HA send.
-_EFFECT_CYCLE_COMPANION: dict[int, int] = {
-    0x04: 0xF0,  # pulse
-}
+# The `58 tt` cycle-timer companion an effect program needs in the SAME
+# phrase to run at all is owned by the protocol library (mwm.EFFECTS /
+# EFFECT_COMPANION) -- see docs/mwm-show-protocol.md section 4.  `48 04`
+# Pulse requires `58 F0`; `48 03` Single flash deliberately has none (dig
+# probe 2026-09-03: `48 03 58 F0` + color is fatal, plain `48 03` + color
+# works).  The integration reads EFFECT_COMPANION rather than re-deriving it.
 
 
 class EarPairState:
@@ -691,7 +685,7 @@ class EarPairState:
         blanks or halves the ears (e.g. yellow-left/blank-right) whereas a
         bare `48 XX` acts on the current color cleanly.  So an effect is
         issued as its own phrase (plus any required `58` cycle companion
-        from `_EFFECT_CYCLE_COMPANION`), FOLLOWED by the color frames.
+        from mwm.EFFECT_COMPANION), FOLLOWED by the color frames.
 
         Order matters: the effect program is started first, THEN the color
         is re-issued so the running effect adopts it (rig: pulse then blue =
@@ -724,7 +718,7 @@ class EarPairState:
         self.resume()
 
         content = [0x48, index]
-        companion = _EFFECT_CYCLE_COMPANION.get(index)
+        companion = EFFECT_COMPANION.get(index)
         if companion is not None:
             content += [0x58, companion]
         frames = [build_frame(content), *color_frames]

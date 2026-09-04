@@ -36,6 +36,15 @@ CARRIER_HZ = 38000
 
 MAX_CONTENT = 16
 
+# Framing / state opcodes surfaced for integration consumers (docs/
+# mwm-show-protocol.md section 4).  These are the canonical forms the HA
+# integration (and CLI tools) encode against; keeping them in the library
+# ensures a consumer never re-derives protocol values.
+EAR_OFF_CODE = 0x60      # simple-color "off" opcode (both ears)
+RIGHT_ONLY_BASE = 0x68   # right-ear-only simple-color base (0x68 + code)
+DEFAULT_COLOR_CODE = 0x67  # canonical default ear color (white)
+RESET_OPCODE = 0x24      # flow-control reset/override
+
 
 def crc8_dallas(data: bytes | list[int] | tuple[int, ...]) -> int:
     """CRC-8/Dallas (polynomial 0x8C reflected, init 0x00)."""
