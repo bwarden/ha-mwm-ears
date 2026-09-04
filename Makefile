@@ -8,12 +8,20 @@
 
 PYTHON ?= python3
 
-.PHONY: build test dist clean
+.PHONY: build test dist vendor clean
 
 # Syntax-check every module in the component (incl. the HA platform files,
 # which aren't importable here but must still compile).
 build:
 	PYTHONPATH=custom_components $(PYTHON) -m compileall -q custom_components
+
+# Pull the latest MWM protocol library from the sibling ir-remote-tools repo
+# into custom_components/mwm_ears/_mwm/ and regenerate the effect options in
+# services.yaml from it.  Run this before making a release; commit the result
+# so the vendored lib and generated services.yaml ship as a reviewed unit.
+# Override the source with MWM_SRC=/path/to/python/mwm.
+vendor:
+	$(PYTHON) tools/vendor_mwm.py
 
 # The vendored protocol library and pair-state logic are unit-tested from
 # tests/; the platform (HA-coupled) modules get their compileall above.

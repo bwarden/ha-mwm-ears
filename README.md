@@ -316,12 +316,32 @@ everything testable without homeassistant installed.
 
 ### Releases & versioning
 
+The integration embeds the MWM protocol library from the sibling
+`ir-remote-tools` repo under `custom_components/mwm_ears/_mwm/`. **Before
+tagging a release, pull the latest library in and verify it:**
+
+```
+make vendor   # copy the latest python/mwm into _mwm/ + regenerate
+              # services.yaml effect options (MWM_SRC=... to override source)
+make test     # run the full suite against the freshly vendored library
+```
+
+`make vendor` copies each library module byte-for-byte (the library is the
+single source of truth for framing, palette, effects, and the effect
+companion) and rewrites the effect `options:` list in `services.yaml` from
+the vendored catalogue, so the effect selector and the library never drift.
+Commit the vendored bump + regenerated `services.yaml` as a reviewed unit,
+then proceed as before:
+
 HACS pulls the version from the latest git tag (prefixed `v`, e.g.
-`v0.7.7`). A release: tag the commit `v<version>`, push the tag; the
-`Release` workflow validates the tag matches both `manifest.json`'s
-`version` and `const.py`'s `INTEGRATION_VERSION`, runs `make test`, builds
-`dist/mwm_ears.zip`, and attaches it to the release. Bumping a version for
-a card-visible change is required so the registered card URL
+`v0.7.7`). A release: run `make vendor` + `make test`, commit the vendored
+library, tag `v<version>`, push the tag; the `Release` workflow validates
+the tag matches both `manifest.json`'s `version` and `const.py`'s
+`INTEGRATION_VERSION`, runs `make test`, builds `dist/mwm_ears.zip`, and
+attaches it to the release. The CI validates the committed vendored state
+(it cannot reach the sibling `ir-remote-tools` repo); the pull-in happens
+locally via `make vendor`. Bumping a version for a card-visible change is
+required so the registered card URL
 (`/custom_components/mwm_ears/frontend/mwm-ears-card.js?v=<version>`)
 cache-busts and the frontend picks up the new card.
 
