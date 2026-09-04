@@ -43,18 +43,18 @@ set_state:
     left_color:
       name: Left ear color
       description: >-
-        Exact color for the left ear only, keeping the right ear exactly as
-        it is (composed fused both+restore frame): "off", a catalog color
-        name, or a "kind:value" selector. Overrides `color` for this ear.
+        Exact color for the left ear only, using the verified left-only
+        forms: "off", a catalog color name, or a "kind:value" selector.
+        Overrides `color` for this ear.
       example: "off"
       selector:
         text: null
     right_color:
       name: Right ear color
       description: >-
-        Exact color for the right ear only, using the verified right-only
-        forms: "off", a catalog color name, or a "kind:value" selector.
-        Overrides `color` for this ear.
+        Exact color for the right ear only, keeping the left ear exactly as
+        it is (composed fused both+restore frame): "off", a catalog color
+        name, or a "kind:value" selector. Overrides `color` for this ear.
       example: "palette:4"
       selector:
         text: null

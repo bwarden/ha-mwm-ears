@@ -295,7 +295,7 @@ class MwmEarsCard extends HTMLElement {
     }
 
     // Per-ear sections get an "Off" circle: turns JUST this ear off via the
-    // light entity's turn_off (server: a right-only/form or both+restore
+    // light entity's turn_off (server: a left-only/form or both+restore
     // composition, leaving the other ear untouched), highlighted when the
     // ear is off. The Both section leaves off to the global On/Off row.
     if (sideKey !== "entity") {
@@ -542,13 +542,13 @@ class MwmEarsCard extends HTMLElement {
 
     card.appendChild(this._buildOnOff());
     card.appendChild(this._buildPaletteSection("left_entity", "Left Ear",
-      "Left picks compose a fused both+restore frame so the right ear keeps its color.",
+      "Left picks use the verified left-only form directly.",
       bothState,
       { enabled: !!this._sides.left }));
     card.appendChild(this._buildPaletteSection("entity", "Both Ears",
       "Sets both ears to the chosen shade (the protocol's native form).", bothState));
     card.appendChild(this._buildPaletteSection("right_entity", "Right Ear",
-      "Right picks use the verified right-only form directly.", bothState,
+      "Right picks compose a fused both+restore frame so the left ear keeps its color.", bothState,
       { enabled: !!this._sides.right }));
     card.appendChild(this._buildEffects(bothState));
     if (this._batch) card.appendChild(this._buildBatchBar());

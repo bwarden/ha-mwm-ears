@@ -45,7 +45,7 @@
         },
         "right_color": {
           "name": "Right ear color",
-          "description": "Exact color for the right ear only (overrides `color` for this ear), using the verified right-only forms: \"off\", a catalog color name, or a \"kind:value\" selector."
+          "description": "Exact color for the right ear only (overrides `color` for this ear), composing the both-ears form so the left ear keeps its color: \"off\", a catalog color name, or a \"kind:value\" selector."
         },
         "effect": {
           "name": "Effect",

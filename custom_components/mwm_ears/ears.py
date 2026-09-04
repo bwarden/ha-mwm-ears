@@ -17,7 +17,7 @@ if __package__:  # normal HA component context
         DEFAULT_COLOR_CODE,
         EAR_OFF_CODE,
         RESET_OPCODE,
-        RIGHT_ONLY_BASE,
+        LEFT_ONLY_BASE,
         EAR_STATE_OFF,
         PALETTE,
         SIMPLE_COLORS,
@@ -35,7 +35,7 @@ else:  # standalone test harness: _bootstrap registers us as "mwm"
         DEFAULT_COLOR_CODE,
         EAR_OFF_CODE,
         RESET_OPCODE,
-        RIGHT_ONLY_BASE,
+        LEFT_ONLY_BASE,
         EAR_STATE_OFF,
         PALETTE,
         SIMPLE_COLORS,
@@ -129,7 +129,7 @@ class EarPairState:
         self._last_active_at: float = 0.0
         # Active PALETTE shade per side (None = simple/unknown). Palette
         # shades are tracked separately from simple codes because a side
-        # can hold either; TSV has both-ears AND right-only palette forms.
+        # can hold either; TSV has both-ears AND left-only palette forms.
         self.palette_code: dict[str, int | None] = {LEFT: None, RIGHT: None}
         self.desired_on: dict[str, bool] = {LEFT: False, RIGHT: False}
         # Last explicitly chosen simple color per side (None = never set);
@@ -412,17 +412,18 @@ class EarPairState:
         row ``left-blue-right-green-fused``; docs/mwm-show-protocol.md
         section 4, "Left vs right ears" and 12.13):
 
-            ``91 6L 6R ..``          simple left  + simple right
-            ``92 6L 0E R|80 ..``     simple left  + palette right
-            ``92 0E L 6R ..``        palette left + simple right
-            ``93 0E L 0E R|80 ..``   palette left + palette right
+            ``91 6R 6L|08 ..``          simple right + simple left
+            ``92 6R 0E L|80 ..``        simple right + palette left
+            ``92 0E R 6L|08 ..``        palette right + simple left
+            ``93 0E R 0E L|80 ..``      palette right + palette left
 
         A palette pick is ``("palette", index)``; a simple ``("simple",
         code)``, with code ``EAR_OFF_CODE`` meaning "off".  Multi-byte
         phrases run opcodes sequentially against both ears, so a both-ear
-        opcode followed by a right-only opcode achieves per-side control in
-        one burst.  This is what lets a left-ear color pick leave the right
-        ear untouched in a single transmission.
+        opcode followed by a left-only opcode achieves per-side control in
+        one burst.  This is what lets a right-ear color pick leave the left
+        ear untouched in a single transmission (no right-only form exists;
+        a left-ear pick uses its verified left-only form directly).
         """
         left = left or self._ear_color(LEFT)
         right = right or self._ear_color(RIGHT)
@@ -433,12 +434,12 @@ class EarPairState:
         lk, lv = left
         rk, rv = right
         if lk == "simple" and rk == "simple":
-            return [build_frame([lv, RIGHT_ONLY_BASE + rv - EAR_OFF_CODE])]
+            return [build_frame([rv, LEFT_ONLY_BASE + lv - EAR_OFF_CODE])]
         if lk == "simple" and rk == "palette":
-            return [build_frame([lv, 0x0E, rv | 0x80])]
+            return [build_frame([0x0E, rv, LEFT_ONLY_BASE + lv - EAR_OFF_CODE])]
         if lk == "palette" and rk == "simple":
-            return [build_frame([0x0E, lv, RIGHT_ONLY_BASE + rv - EAR_OFF_CODE])]
-        return [build_frame([0x0E, lv, 0x0E, rv | 0x80])]
+            return [build_frame([rv, 0x0E, lv | 0x80])]
+        return [build_frame([0x0E, rv, 0x0E, lv | 0x80])]
 
     async def _send_group(
         self, frames: list[bytes], repeat_count: int
@@ -496,10 +497,10 @@ class EarPairState:
         Canonical TSV frames only (rig session 2026-08-23 landed them
         instantly WITHOUT any leading 24 override; the override's flow
         control blacks the ears for seconds -- undesirable here). When
-        ONLY the right slot changes we send the single right-only form:
-        no intermediate flash, the left ear never hears a thing.
+        ONLY the left slot changes we send the single left-only form:
+        no intermediate flash, the right ear never hears a thing.
         """
-        old_left = self.codes[LEFT]
+        old_right = self.codes[RIGHT]
         self.palette_code[side] = None
         self.running_effect = None
         self.codes[side] = code
@@ -508,12 +509,12 @@ class EarPairState:
             self.last_simple[side] = code
         self.resume()
         if (
-            side == RIGHT
-            and old_left == self.codes[LEFT]
-            and old_left != code  # equal pairs use the canonical form
+            side == LEFT
+            and old_right == self.codes[RIGHT]
+            and old_right != code  # equal pairs use the canonical form
             and EAR_OFF_CODE <= code <= 0x67
         ):
-            frames = [build_frame([RIGHT_ONLY_BASE + code - EAR_OFF_CODE])]
+            frames = [build_frame([LEFT_ONLY_BASE + code - EAR_OFF_CODE])]
             self._hold_frames = frames
             await self._send_group(frames, BURST_REPEATS)
             return
@@ -560,9 +561,9 @@ class EarPairState:
             pal = desc.get("palette")
             if pal:
                 pp = pal["index"]
-                if pal["scope"] == "right":
-                    self.codes[RIGHT] = EAR_OFF_CODE
-                    self.palette_code[RIGHT] = pp
+                if pal["scope"] == "left":
+                    self.codes[LEFT] = EAR_OFF_CODE
+                    self.palette_code[LEFT] = pp
                 else:
                     self.codes = {LEFT: EAR_OFF_CODE, RIGHT: EAR_OFF_CODE}
                     self.palette_code = {LEFT: pp, RIGHT: pp}
@@ -586,18 +587,18 @@ class EarPairState:
             on = code != EAR_OFF_CODE
             self.desired_on = {LEFT: on, RIGHT: on}
         elif len(content) == 1 and 0x68 <= content[0] <= 0x6F:
-            self.codes[RIGHT] = (
+            self.codes[LEFT] = (
                 EAR_OFF_CODE if content[0] == 0x68
-                else EAR_OFF_CODE + content[0] - RIGHT_ONLY_BASE
+                else EAR_OFF_CODE + content[0] - LEFT_ONLY_BASE
             )
-            self.palette_code[RIGHT] = None
+            self.palette_code[LEFT] = None
         elif (
             len(content) == 2 and content[0] == 0x0E
             and content[1] & 0x7F <= 0x1D
         ):
             pp = content[1] & 0x7F
             if content[1] & 0x80:
-                slots = {RIGHT: pp}
+                slots = {LEFT: pp}
             else:
                 self.codes = {LEFT: EAR_OFF_CODE, RIGHT: EAR_OFF_CODE}
                 slots = {LEFT: pp, RIGHT: pp}
@@ -641,19 +642,19 @@ class EarPairState:
     async def apply_palette(self, index: int, side: str | None = None) -> None:
         """Apply a palette shade using the TSV short forms only.
 
-        RIGHT-only: `91 0E pp|80` (samples/mwm-gwts-colors.tsv). With no
-        side (the both-ears entity) and for LEFT picks we record the new
+        LEFT-only: `91 0E pp|80` (samples/mwm-gwts-colors.tsv). With no
+        side (the both-ears entity) and for RIGHT picks we record the new
         state and let `_state_frames` compose a single fused frame.  The
-        fused form is what lets a LEFT palette pick leave the right ear
+        fused form is what lets a RIGHT palette pick leave the left ear
         untouched in one burst -- no [both -> restore] two-frame flash, and
-        no degrading to a both-ears frame that clobbers a simple right ear.
+        no degrading to a both-ears frame that clobbers a simple left ear.
         """
         target = side or "both"
 
-        if target == RIGHT:
-            self.palette_code[RIGHT] = index
+        if target == LEFT:
+            self.palette_code[LEFT] = index
             self.running_effect = None
-            self.desired_on[RIGHT] = True
+            self.desired_on[LEFT] = True
             self.resume()
             frames = [build_frame([0x0E, index | 0x80])]
             self._hold_frames = frames
@@ -664,9 +665,9 @@ class EarPairState:
             self.palette_code[LEFT] = index
             self.palette_code[RIGHT] = index
             self.desired_on = {LEFT: True, RIGHT: True}
-        else:  # LEFT wheel pick: change left, leave right exactly as it is
-            self.palette_code[LEFT] = index
-            self.desired_on[LEFT] = True
+        else:  # RIGHT wheel pick: change right, leave left exactly as it is
+            self.palette_code[RIGHT] = index
+            self.desired_on[RIGHT] = True
         self.running_effect = None
         self.resume()
         await self._send_state(BURST_REPEATS)
@@ -740,7 +741,7 @@ class EarPairState:
         """Turn one ear off.
 
         Routes through _send_state, so the other ear keeps its color via
-        the both+right-only composition.  Already-dark ears are a no-op
+        the both+left-only composition.  Already-dark ears are a no-op
         with no transmission: HA fires turn_off liberally (automations,
         area off, stale restored state) and re-bursting here once
         produced surprise all-off commands.
@@ -754,10 +755,10 @@ class EarPairState:
         if not any(self.desired_on.values()):
             self.running_effect = None
         self.resume()
-        if side == RIGHT:
-            # Right-only OFF is a verified single form (`90 68`): the left
+        if side == LEFT:
+            # Left-only OFF is a verified single form (`90 68`): the right
             # ear stays untouched -- no compose flash.
-            frames = [build_frame([RIGHT_ONLY_BASE])]
+            frames = [build_frame([LEFT_ONLY_BASE])]
             self._hold_frames = frames
             await self._send_group(frames, BURST_REPEATS)
             return
@@ -782,7 +783,7 @@ class EarPairState:
         per-side ``left``/``right`` wins over it for that ear).
 
         Transmissions are minimized: identical picks collapse to one native
-        both frame; per-ear picks reuse the fused-both/right-only forms so
+        both frame; per-ear picks reuse the fused-both/left-only forms so
         the other ear keeps its own color with no flash; off-ing an already
         dark ear is a no-op.  Nothing is transmitted when no field is set.
         """

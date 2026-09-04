@@ -61,7 +61,7 @@ class SnapQualityTests(unittest.TestCase):
     def test_gray_lands_on_white_not_a_pale_tint(self):
         # Gray (no hue) must not drift to a pale tint; white is the only
         # hue-free shade. It is also known-identical to the simple one-bit
-        # white, so it resolves to that opcode (simple right-only).
+        # white, so it resolves to that opcode (simple left-only).
         self.assertEqual(nearest_entry((128, 128, 128)), ("simple", 0x67))
 
     def test_saturated_teal_stays_cyan(self):
@@ -103,7 +103,7 @@ class NearestTests(unittest.TestCase):
     def test_equivalent_palette_shades_snap_to_simple(self):
         # The measured "pure"/lime/white twins differ from a one-bit simple
         # color by a few LSBs; the color wheel snaps them to the simple
-        # opcode (single-code right-only primitive) since a viewer cannot
+        # opcode (single-code left-only primitive) since a viewer cannot
         # tell them apart.
         self.assertEqual(nearest_entry((0x01, 0xFF, 0x00)), ("simple", 0x62))  # lime green
         self.assertEqual(nearest_entry((0x00, 0xFE, 0x00)), ("simple", 0x62))  # pure green

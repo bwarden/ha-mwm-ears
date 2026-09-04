@@ -122,21 +122,21 @@ class TrackerTests(unittest.TestCase):
         # genuine receiver traffic clarifies who sends such phrases.
         tracker = EarStateTracker()
         tracker.feed_frame(frame_hex([0x61, 0x66]))
-        self.assertEqual(tracker.snapshot(), "left blue, right yellow")
+        self.assertEqual(tracker.snapshot(), "left yellow, right blue")
         self.assertIsNone(tracker.effect)
 
-    def test_right_only_frames_touch_right_slot_only(self):
+    def test_left_only_frames_touch_left_slot_only(self):
         tracker = EarStateTracker()
         tracker.feed_frame(frame_hex([0x61]))          # both blue
-        tracker.feed_frame(build_frame([0x6E]))        # right-only yellow
-        self.assertEqual(tracker.snapshot(), "left blue, right yellow")
-        tracker.feed_frame(build_frame([0x68]))        # right-only off
-        self.assertEqual(tracker.snapshot(), "left blue, right off")
+        tracker.feed_frame(build_frame([0x6E]))        # left-only yellow
+        self.assertEqual(tracker.snapshot(), "left yellow, right blue")
+        tracker.feed_frame(build_frame([0x68]))        # left-only off
+        self.assertEqual(tracker.snapshot(), "left off, right blue")
 
     def test_short_palette_forms_read_per_side(self):
         tracker = EarStateTracker()
-        tracker.feed_frame(build_frame([0x0E, 0x80 | 0x01]))  # right sky blue
-        self.assertEqual(tracker.snapshot(), "left off, right sky blue")
+        tracker.feed_frame(build_frame([0x0E, 0x80 | 0x01]))  # left sky blue
+        self.assertEqual(tracker.snapshot(), "left sky blue, right off")
         tracker.feed_frame(build_frame([0x0E, 0x12]))         # both pure yellow
         self.assertEqual(tracker.snapshot(), "both ears pure yellow")
 

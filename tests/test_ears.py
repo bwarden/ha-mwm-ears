@@ -48,24 +48,24 @@ def run(coro):
 
 
 class ApplyTests(unittest.TestCase):
-    def test_initial_send_composes_fused_frame(self):
+    def test_initial_send_uses_single_left_only_frame(self):
         h = Harness()
         run(h.pair.apply_simple("left", 0x64))
-        # Fused frame: 91 64 68 = left red, right off in one burst.
-        # The composed group runs BURST_REPEATS+1 = 2 passes.
+        # Left-only frame: 90 6C = left red, right off in one burst.
+        # The group runs BURST_REPEATS+1 = 2 passes.
         self.assertEqual(len(h.calls), 1 * (ears.BURST_REPEATS + 1))
-        fused = build_frame([0x64, ears.RIGHT_ONLY_BASE])
+        single = build_frame([ears.LEFT_ONLY_BASE + 0x64 - ears.EAR_OFF_CODE])
         for i, (_hexa, rc) in enumerate(h.calls):
             self.assertEqual(rc, 0)
-            self.assertEqual(bytes.fromhex(_hexa), fused)
+            self.assertEqual(bytes.fromhex(_hexa), single)
 
-    def test_right_only_change_sends_single_form(self):
+    def test_left_only_change_sends_single_form(self):
         h = Harness()
-        run(h.pair.apply_simple("left", 0x61))
+        run(h.pair.apply_simple("right", 0x61))
         h.calls.clear()
-        run(h.pair.apply_simple("right", 0x66))
-        # Fast path: only the right slot changed -> single verified frame,
-        # repeated; the left ear never sees an intermediate color.
+        run(h.pair.apply_simple("left", 0x66))
+        # Fast path: only the left slot changed -> single verified frame,
+        # repeated; the right ear never sees an intermediate color.
         self.assertEqual(
             h.calls,
             [(build_frame([0x6E]).hex().upper(), 0)] * (ears.BURST_REPEATS + 1),
@@ -138,8 +138,10 @@ class TurnOnRestoreTests(unittest.TestCase):
         sent = run(h.pair.turn_on_side("left"))
         self.assertEqual(sent, 0x67)
         group = h.calls[-(1 * (ears.BURST_REPEATS + 1)):]
-        fused = build_frame([0x67, ears.RIGHT_ONLY_BASE])  # left white, right off
-        self.assertEqual(bytes.fromhex(group[0][0]), fused)
+        single = build_frame([
+            ears.LEFT_ONLY_BASE + 0x67 - ears.EAR_OFF_CODE
+        ])  # left white, right off
+        self.assertEqual(bytes.fromhex(group[0][0]), single)
         self.assertEqual(len(h.calls), 2)
 
     def test_restores_last_explicit_color(self):
@@ -149,12 +151,14 @@ class TurnOnRestoreTests(unittest.TestCase):
         before = len(h.calls)
         sent = run(h.pair.turn_on_side("left"))
         self.assertEqual(sent, 0x64)
-        # Fused group x2 passes: single frame with left red, right off.
+        # Left-only group x2 passes: single frame with left red, right off.
         self.assertEqual(len(h.calls),
                          before + 1 * (ears.BURST_REPEATS + 1))
-        fused = build_frame([0x64, ears.RIGHT_ONLY_BASE])
-        self.assertEqual(bytes.fromhex(h.calls[before][0]), fused)
-        self.assertEqual(bytes.fromhex(h.calls[-1][0]), fused)
+        single = build_frame([
+            ears.LEFT_ONLY_BASE + 0x64 - ears.EAR_OFF_CODE
+        ])
+        self.assertEqual(bytes.fromhex(h.calls[before][0]), single)
+        self.assertEqual(bytes.fromhex(h.calls[-1][0]), single)
 
     def test_sides_remember_independently(self):
         h = Harness()
@@ -166,25 +170,26 @@ class TurnOnRestoreTests(unittest.TestCase):
 
 
 class CompositionTests(unittest.TestCase):
-    """Per-side control = coordination of BOTH + RIGHT-only primitives."""
+    """Per-side control = a verified direct LEFT-only form, fused BOTH +
+restore for RIGHT picks."""
 
-    def test_right_only_codes_mirror_simple_codes(self):
-        # TSV rows color-X-right: exact CRCs pin the mapping 90 68..6F.
+    def test_left_only_codes_mirror_simple_codes(self):
+        # TSV rows color-X-left: exact CRCs pin the mapping 90 68..6F.
         expected = {0x60: "906864", 0x64: "906C05",
                     0x66: "906EB9", 0x67: "906FE7"}
-        RIGHT_ONLY_BASE, EAR_OFF_CODE = ears.RIGHT_ONLY_BASE, ears.EAR_OFF_CODE
+        LEFT_ONLY_BASE, EAR_OFF_CODE = ears.LEFT_ONLY_BASE, ears.EAR_OFF_CODE
         for simple, hexstr in expected.items():
-            frame = build_frame([RIGHT_ONLY_BASE + simple - EAR_OFF_CODE])
+            frame = build_frame([LEFT_ONLY_BASE + simple - EAR_OFF_CODE])
             self.assertEqual(frame.hex().upper(), hexstr)
 
     def test_mixed_pair_composes_fused_frame(self):
-        RIGHT_ONLY_BASE, EAR_OFF_CODE = ears.RIGHT_ONLY_BASE, ears.EAR_OFF_CODE
+        LEFT_ONLY_BASE, EAR_OFF_CODE = ears.LEFT_ONLY_BASE, ears.EAR_OFF_CODE
         from ears_core import LEFT, RIGHT
         h = Harness()
         h.pair.codes = {LEFT: 0x62, RIGHT: 0x66}
         frames = h.pair._state_frames()
         self.assertEqual(len(frames), 1)
-        self.assertEqual(frames[0], build_frame([0x62, RIGHT_ONLY_BASE + 0x66 - EAR_OFF_CODE]))
+        self.assertEqual(frames[0], build_frame([0x66, LEFT_ONLY_BASE + 0x62 - EAR_OFF_CODE]))
 
     def test_left_dark_right_lit_uses_fused_frame(self):
         from ears_core import LEFT, RIGHT
@@ -192,13 +197,13 @@ class CompositionTests(unittest.TestCase):
         h.pair.codes = {LEFT: 0x60, RIGHT: 0x63}
         frames = h.pair._state_frames()
         self.assertEqual(len(frames), 1)
-        self.assertEqual(frames[0], build_frame([0x60, 0x6B]))
+        self.assertEqual(frames[0], build_frame([0x63, 0x68]))
 
     def test_group_repeats_preserve_fused_frame(self):
         h = Harness()
-        run(h.pair.apply_simple("left", 0x64))
+        run(h.pair.apply_simple("right", 0x64))
         pattern = [c[0] for c in h.calls]
-        fused_hex = build_frame([0x64, ears.RIGHT_ONLY_BASE]).hex().upper()
+        fused_hex = build_frame([0x64, ears.LEFT_ONLY_BASE]).hex().upper()
         self.assertEqual(
             pattern,
             [fused_hex] * (ears.BURST_REPEATS + 1),
@@ -245,11 +250,11 @@ class AdoptionTests(unittest.TestCase):
         self.assertIsNone(h.pair.suspended_by)
         self.assertEqual(h.pair.codes["left"], 0x64)
 
-    def test_foreign_right_only_touches_right_slot(self):
+    def test_foreign_left_only_touches_left_slot(self):
         h = HubHarness()
         run(h.pair.apply_simple_both(0x61))
         h.hub.ingest([build_frame([0x6E])])
-        self.assertEqual(h.pair.codes, {"left": 0x61, "right": 0x66})
+        self.assertEqual(h.pair.codes, {"left": 0x66, "right": 0x61})
 
     def test_foreign_effect_invocation_adopted(self):
         from mwm.decode import effect_label
@@ -666,7 +671,7 @@ class WandCommandTests(unittest.TestCase):
 
 
 class PaletteSideTests(unittest.TestCase):
-    """Per-side palette via the TSV right-only template (91 0E pp|80)."""
+    """Per-side palette via the TSV left-only template (91 0E pp|80)."""
 
     def test_frames_match_tsv_checksums(self):
         def frame(pp):
@@ -675,106 +680,106 @@ class PaletteSideTests(unittest.TestCase):
         # samples/mwm-gwts-colors.tsv rows:
         self.assertEqual(frame(0x00).hex().upper(), "910E005F")  # both
         self.assertEqual(frame(0x01).hex().upper(), "910E0101")
-        self.assertEqual(frame(0x80).hex().upper(), "910E80D3")  # right
+        self.assertEqual(frame(0x80).hex().upper(), "910E80D3")  # left
         self.assertEqual(frame(0x81).hex().upper(), "910E818D")
 
-    def test_right_pick_is_single_right_only_frame(self):
+    def test_left_pick_is_single_left_only_frame(self):
         h = Harness()
-        run(h.pair.apply_palette(0x00, side="right"))
+        run(h.pair.apply_palette(0x00, side="left"))
         self.assertEqual(
             h.calls,
             [(build_frame([0x0E, 0x80]).hex().upper(), 0)]
             * (ears.BURST_REPEATS + 1),
         )
-        self.assertEqual(h.pair.palette_code["right"], 0x00)
-        self.assertIsNone(h.pair.palette_code["left"])
+        self.assertEqual(h.pair.palette_code["left"], 0x00)
+        self.assertIsNone(h.pair.palette_code["right"])
 
-    def test_left_pick_composes_when_right_holds_palette(self):
+    def test_right_pick_composes_when_left_holds_palette(self):
         h = Harness()
-        run(h.pair.apply_palette(0x00, side="right"))
+        run(h.pair.apply_palette(0x00, side="left"))
         h.calls.clear()
-        run(h.pair.apply_palette(0x04, side="left"))
-        # LEFT palette pick preserves the right's palette shade by fusing
-        # the pair into ONE frame: left 0x04, right 0x00 (per-ear register).
+        run(h.pair.apply_palette(0x04, side="right"))
+        # RIGHT palette pick preserves the left's palette shade by fusing
+        # the pair into ONE frame: right 0x04, left 0x00 (per-ear register).
         fused = build_frame([0x0E, 0x04, 0x0E, 0x80])
         self.assertEqual(fused.hex().upper(), "930E040E8022")
         self.assertEqual(
             h.calls, [(fused.hex().upper(), 0)] * (ears.BURST_REPEATS + 1)
         )
-        self.assertEqual(h.pair.palette_code["left"], 0x04)
-        self.assertEqual(h.pair.palette_code["right"], 0x00)
+        self.assertEqual(h.pair.palette_code["right"], 0x04)
+        self.assertEqual(h.pair.palette_code["left"], 0x00)
 
-    def test_left_pick_preserves_simple_right_in_fused_frame(self):
+    def test_right_pick_preserves_simple_left_in_fused_frame(self):
         h = Harness()
-        run(h.pair.apply_simple("left", 0x64))   # right still simple off
-        run(h.pair.apply_simple("right", 0x61))  # right holds simple blue
+        run(h.pair.apply_simple("right", 0x64))   # left still simple off
+        run(h.pair.apply_simple("left", 0x61))    # left holds simple blue
         h.calls.clear()
-        run(h.pair.apply_palette(0x09, side="left"))
-        # LEFT palette pick must NOT clobber the simple right: fuse the pair
-        # into ONE frame (left palette 0x09, right simple blue via 0x68+..).
-        fused = build_frame([0x0E, 0x09, ears.RIGHT_ONLY_BASE + 0x61 - ears.EAR_OFF_CODE])
+        run(h.pair.apply_palette(0x09, side="right"))
+        # RIGHT palette pick must NOT clobber the simple left: fuse the pair
+        # into ONE frame (right palette 0x09, left simple blue via 0x68+..).
+        fused = build_frame([0x0E, 0x09, ears.LEFT_ONLY_BASE + 0x61 - ears.EAR_OFF_CODE])
         self.assertEqual(fused.hex().upper(), "920E096959")
         self.assertEqual(
             h.calls, [(fused.hex().upper(), 0)] * (ears.BURST_REPEATS + 1)
         )
-        self.assertEqual(h.pair.palette_code["left"], 0x09)
-        self.assertIsNone(h.pair.palette_code["right"])
-        self.assertEqual(h.pair.codes["right"], 0x61)
+        self.assertEqual(h.pair.palette_code["right"], 0x09)
+        self.assertIsNone(h.pair.palette_code["left"])
+        self.assertEqual(h.pair.codes["left"], 0x61)
 
-    def test_left_simple_pick_preserves_right_palette_in_fused_frame(self):
+    def test_right_simple_pick_preserves_left_palette_in_fused_frame(self):
         h = Harness()
-        run(h.pair.apply_palette(0x00, side="right"))
+        run(h.pair.apply_palette(0x00, side="left"))
         h.calls.clear()
-        run(h.pair.apply_simple("left", 0x64))
-        # Changing the LEFT simple color must leave the right's palette
+        run(h.pair.apply_simple("right", 0x64))
+        # Changing the RIGHT simple color must leave the left's palette
         # shade untouched -- fused `92 64 0E 80` in one burst.
         fused = build_frame([0x64, 0x0E, 0x00 | 0x80])
         self.assertEqual(
             h.calls, [(fused.hex().upper(), 0)] * (ears.BURST_REPEATS + 1)
         )
-        self.assertEqual(h.pair.palette_code["right"], 0x00)
-        self.assertEqual(h.pair.codes["left"], 0x64)
+        self.assertEqual(h.pair.palette_code["left"], 0x00)
+        self.assertEqual(h.pair.codes["right"], 0x64)
 
-    def test_left_off_preserves_right_palette_in_fused_frame(self):
+    def test_right_off_preserves_left_palette_in_fused_frame(self):
         h = Harness()
-        run(h.pair.apply_palette(0x00, side="right"))
-        run(h.pair.apply_simple("left", 0x64))
+        run(h.pair.apply_palette(0x00, side="left"))
+        run(h.pair.apply_simple("right", 0x64))
         h.calls.clear()
-        run(h.pair.turn_off_side("left"))
-        # Turning LEFT off (via both-ear op) tacks on a right-only palette
-        # restore so the right stays lit -- no clobber to off.
+        run(h.pair.turn_off_side("right"))
+        # Turning RIGHT off (via both-ear op) tacks on a left-only palette
+        # restore so the left stays lit -- no clobber to off.
         fused = build_frame([0x60, 0x0E, 0x00 | 0x80])
         self.assertEqual(
             h.calls, [(fused.hex().upper(), 0)] * (ears.BURST_REPEATS + 1)
         )
-        self.assertEqual(h.pair.palette_code["right"], 0x00)
-        self.assertEqual(h.pair.codes["left"], 0x60)
+        self.assertEqual(h.pair.palette_code["left"], 0x00)
+        self.assertEqual(h.pair.codes["right"], 0x60)
 
     def test_side_names_read_per_side(self):
         h = Harness()
-        run(h.pair.apply_palette(0x00, side="right"))
-        self.assertEqual(h.pair.side_color_name("right"), "pale cyan-white")
-        self.assertNotEqual(h.pair.side_color_name("left"), "pale cyan-white")
+        run(h.pair.apply_palette(0x00, side="left"))
+        self.assertEqual(h.pair.side_color_name("left"), "pale cyan-white")
+        self.assertNotEqual(h.pair.side_color_name("right"), "pale cyan-white")
 
 
 class OffSemanticsTests(unittest.TestCase):
     def test_off_sent_once_in_burst(self):
         h = Harness()
-        run(h.pair.apply_simple("left", 0x62))
-        run(h.pair.turn_off_side("left"))
+        run(h.pair.apply_simple("right", 0x62))
+        run(h.pair.turn_off_side("right"))
         off_sends = [c for c in h.calls
                      if bytes.fromhex(c[0])[:2] == b"\x90\x60"]
         self.assertEqual(len(off_sends), ears.BURST_REPEATS + 1)
 
-    def test_mixed_pair_composes_correctly(self):
+    def test_left_off_sends_single_left_only_form(self):
         h = Harness()
-        run(h.pair.apply_simple("left", 0x64))
+        run(h.pair.apply_simple("right", 0x64))
         h.calls.clear()
-        run(h.pair.apply_simple("right", 0x60))
-        # right goes dark via right-only form; left untouched
+        run(h.pair.apply_simple("left", 0x60))
+        # left goes dark via the single left-only form; right untouched
         self.assertEqual(len(h.calls), ears.BURST_REPEATS + 1)
         self.assertEqual(
-            h.calls[0][0], build_frame([ears.RIGHT_ONLY_BASE]).hex().upper()
+            h.calls[0][0], build_frame([ears.LEFT_ONLY_BASE]).hex().upper()
         )
 
     def test_equal_pair_uses_canonical_single_byte_form(self):
@@ -787,20 +792,20 @@ class OffSemanticsTests(unittest.TestCase):
 
     def test_both_off_burst_is_canonical_keepalive_form(self):
         h = Harness()
-        run(h.pair.apply_simple("left", 0x64))
-        run(h.pair.turn_off_side("left"))       # both dark -> 90 60 A6
+        run(h.pair.apply_simple("right", 0x64))
+        run(h.pair.turn_off_side("right"))      # both dark -> 90 60 A6
         frame = bytes.fromhex(h.calls[-1][0])
         self.assertEqual(bytes(frame), build_frame([0x60]))
         self.assertEqual(frame.hex().upper(), "9060A6")
 
     def test_turning_off_already_dark_ear_sends_nothing(self):
         h = Harness()
-        run(h.pair.apply_simple("left", 0x64))
+        run(h.pair.apply_simple("right", 0x64))
         before = len(h.calls)
-        run(h.pair.turn_off_side("right"))  # right was never lit
+        run(h.pair.turn_off_side("left"))  # left was never lit
         self.assertEqual(len(h.calls), before)
         # and an all-dark pair stays silent too
-        run(h.pair.turn_off_side("left"))
+        run(h.pair.turn_off_side("right"))
         # only the real all-off group burst (no override frame)
         self.assertEqual(len(h.calls), before + ears.BURST_REPEATS + 1)
 

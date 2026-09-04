@@ -51,8 +51,8 @@ box, which the form suggests together; either half is optional:
   lights driving every MWM ear in range as one paired set (all
   three share a device and always agree -- they are views over one
   room-state store). *Ears* maps to the protocol's native both-ear
-  frames; *Right Ear* to the right-only frames; *Left Ear* is the
-  composed proxy (both -> left color, then right-only restore).
+  frames; *Left Ear* to the left-only frames; *Right Ear* is the
+  composed proxy (both -> right color, then left-only restore).
   *Ears* is on when either ear is on, so turning it off turns both off.
   - Any color from HA's picker snaps to the nearest representable shade
     using hue-dominant matching (hue drift is penalised far more than
@@ -62,11 +62,11 @@ box, which the form suggests together; either half is optional:
     rig session 2026-08-23 confirmed multi-byte phrases are sequential
     opcode scripts -- last opcode wins on both ears -- so no per-side
     fused phrases are ever invented):
-    - simple colors: both-ears `90 6X`, right-only `90 68+X`. Right-slot
-      changes send the single right-only form (no visible flash); left
-      changes compose `90 <left>` + `90 <right-only restore>`.
-    - palette shades: both-ears `91 0E pp`, right-only `91 0E pp|80`.
-      Left picks compose both+restore when the right ear already holds a
+    - simple colors: both-ears `90 6X`, left-only `90 68+X`. Left-slot
+      changes send the single left-only form (no visible flash); right
+      changes compose `90 <right>` + `90 <left-only restore>`.
+    - palette shades: both-ears `91 0E pp`, left-only `91 0E pp|80`.
+      Right picks compose both+restore when the left ear already holds a
       palette shade, else degrade to the both-ears form.
     - equal pairs use just the canonical single frame (incl. `90 60` off).
     No leading `24` override precedes color writes: it blacks the ears
@@ -212,7 +212,7 @@ title: My Ears
   The global On / Off row covers the whole pair.
 - Picking from the HA color wheel still snaps to the nearest shade, and
   palette shades that look identical to a one-bit simple color (e.g. lime
-  green → simple green) resolve to the simple opcode, whose right-only
+  green → simple green) resolve to the simple opcode, whose left-only
   primitive is a single command.
 - **On / Off** control the whole pair (the Both entity). **Restore color**
   clears a running effect and re-issues the remembered color (a bare
@@ -258,8 +258,8 @@ target:
   entity_id: light.mwm_ears_office_ears   # the Both entity (or mwm_ears device)
 data:
   color: "simple:0x62"      # both ears in one native frame — or use per-side:
-  left_color: "off"          #   left ear only
-  right_color: "palette:4"   #   right ear only (verified right-only form)
+  left_color: "off"          #   left ear only (verified left-only form)
+  right_color: "palette:4"   #   right ear only (composed fused form)
   effect: Color rotation     # room-wide program, run first so it adopts the colours
 ```
 
@@ -269,7 +269,7 @@ Fields:
   a single transmission) when no side field overrides it.
 - `left_color` / `right_color` — per-ear override, each accepting `"off"`,
   a catalog name, or a `"kind:value"` selector; the other ear stays exactly
-  as it is (fused/right-only forms, no intermediate flash).
+  as it is (left-only / fused forms, no intermediate flash).
 - `effect` — one of the effect-list programs. When set, the effect is issued
   FIRST (as a bare `48 XX` + any `58` cycle companion — no `24` reset, which
   blanks the ears), then the chosen colours are re-issued so the running

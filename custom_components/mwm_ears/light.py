@@ -146,7 +146,7 @@ class MwmEarLight(LightEntity):
     """One ear of the pair driven through an infrared emitter.
 
     Both entities control the same physical room of ears; composing the
-    both-ears and right-only primitives keeps their simple colors
+    both-ears and left-only primitives keeps their simple colors
     independent. Any HS color picked in HA
     snaps to the nearest representable ear shade (7 simple colors plus the
     measured 29-shade palette). Palette shades apply to both ears at once --
@@ -257,8 +257,8 @@ class MwmEarLight(LightEntity):
             # in light.py / ears.py, not here).
             "color_palette": color_palette(),
             "note": (
-                "Right-ear picks use verified right-only frames directly; "
-                "left picks fuse the pair into one frame so the right ear "
+                "Left-ear picks use verified left-only frames directly; "
+                "right picks fuse the pair into one frame so the left ear "
                 "keeps its color (palette or simple) with no flash or "
                 "clobber. Repeats pause while a foreign MWM command is in "
                 "charge."

@@ -102,11 +102,11 @@ def nearest_entry(
     """Snap an RGB triple to the closest representable ear color.
 
     Returns (kind, code) where kind is "simple" or "palette".  Simple
-    colors win ties because their right-only primitive is a single
-    opcode (0x68-0x6F) while palette right-only needs the ``|80``
+    colors win ties because their left-only primitive is a single
+    opcode (0x68-0x6F) while palette left-only needs the ``|80``
     modifier on a two-byte ``0x0E`` command.
     """
-    # Prefer simple colors on cost ties (simpler right-only primitive);
+    # Prefer simple colors on cost ties (simpler left-only primitive);
     # code breaks any remaining tie deterministically.
     candidates: list[tuple[float, int, int]] = []
     for code, (_, ref) in SIMPLE_COLORS.items():
@@ -118,7 +118,7 @@ def nearest_entry(
         return "simple", code
     # A palette shade won, but if it is visually no different from a simple
     # one-bit color (see _SIMPLE_EQUIV_DELTA) snap to that opcode instead:
-    # simpler right-own primitive, and nothing a viewer can tell apart.  The
+    # simpler left-only primitive, and nothing a viewer can tell apart.  The
     # exact-command path (select_color) can still send the twin.
     simple_code = _equivalent_to_simple(PALETTE[code][1])
     if simple_code is not None:

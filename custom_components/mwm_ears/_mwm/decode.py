@@ -140,13 +140,13 @@ def _walk_tokens(content: list[int] | bytes) -> tuple[list[str], int | None]:
             i += 1
 
         elif b in (0x60, 0x68):
-            push("both ears off" if b == 0x60 else "right ear off")
+            push("both ears off" if b == 0x60 else "left ear off")
             i += 1
         elif 0x61 <= b <= 0x67:
             push(f"both ears {_color_name(b)}")
             i += 1
         elif 0x69 <= b <= 0x6F:
-            push(f"right ear {_color_name(0x60 + b - 0x68)}")
+            push(f"left ear {_color_name(0x60 + b - 0x68)}")
             i += 1
 
         elif b == 0x0E and i + 1 < n:
@@ -264,7 +264,7 @@ WAND_PROGRAMS = {
 
 # Static wand color templates: fixed leading (gg, kk, length). Body
 # layout: `96 19 gg kk 16 pp scope ..` -- pp at index 5, scope byte at
-# index 6 (even = both ears, odd = right-only).
+# index 6 (even = both ears, odd = left-only).
 _WAND_STATIC = {
     (0x07, 0x0F, 8),
     (0x0B, 0x09, 8),
@@ -288,7 +288,7 @@ def _describe_wand(body: list[int]) -> dict:
     known = WAND_PROGRAMS.get((gg, kk))
     if (gg, kk, len(body)) in _WAND_STATIC:
         pp = body[5]
-        scope = "right" if body[6] & 0x01 else "both"
+        scope = "left" if body[6] & 0x01 else "both"
         desc["palette"] = {"index": pp & 0x7F, "scope": scope}
         name = PALETTE.get(pp & 0x7F, ("unknown", None))[0]
         desc["summary"] = (
@@ -351,9 +351,23 @@ def describe_55aa(data: bytes) -> dict:
         return {"kind": "55aa", "summary": f"interactive game: {name}"}
     if payload[:2] == b"\x08\xc4":
         return {"kind": "55aa", "summary": "ride shutdown command"}
+    # Show timecodes (Jon Fether post 259733; confirmed against oPossum's
+    # EMLG dumps, post 259752): a 9-byte content block whose final three
+    # bytes are HH MM SS in plain decimal, e.g. ... 00 02 05 = 00h02m05s.
+    # Fether's examples use an 0x19 length prefix, oPossum's 0x09; both are
+    # the same layout. 0x00:00:00 is the start marker.
+    if len(payload) == 9:
+        hh, mm, ss = payload[-3], payload[-2], payload[-1]
+        if 0 <= hh <= 23 and 0 <= mm <= 59 and 0 <= ss <= 59:
+            if hh == 0 and mm == 0 and ss == 0:
+                summary = "show timecode start (00:00:00)"
+            else:
+                summary = f"show timecode {hh:02d}:{mm:02d}:{ss:02d}"
+            return {"kind": "55aa", "summary": summary,
+                    "timecode": (hh, mm, ss)}
     return {
         "kind": "55aa",
-        "summary": "timecode/system broadcast (" + " ".join(
+        "summary": "system broadcast (" + " ".join(
             f"{b:02X}" for b in payload[:8]
         ) + ("..." if len(payload) > 8 else "") + ")",
     }
@@ -498,13 +512,13 @@ class EarStateTracker:
         if len(content) == 2 and packed[0] & 0x0F == 1 and (
             0x60 <= content[0] <= 0x67 and 0x60 <= content[1] <= 0x67
         ):
-            self._left = _color_name(content[0]) if content[0] != 0x60 else EAR_STATE_OFF
-            self._right = _color_name(content[1]) if content[1] != 0x60 else EAR_STATE_OFF
+            self._left = _color_name(content[1]) if content[1] != 0x60 else EAR_STATE_OFF
+            self._right = _color_name(content[0]) if content[0] != 0x60 else EAR_STATE_OFF
             self._effect = None
             return desc
 
         # Short palette forms from samples/mwm-gwts-colors.tsv:
-        # `0E pp` sets both ears, `0E pp|80` the right ear only.
+        # `0E pp` sets both ears, `0E pp|80` the left ear only.
         if (
             len(content) == 2 and content[0] == 0x0E
             and content[1] & 0x7F <= 0x1D
@@ -514,7 +528,7 @@ class EarStateTracker:
                 PALETTE.get(pp, ("unknown", None))[0]
             )
             if content[1] & 0x80:
-                self._right = name
+                self._left = name
             else:
                 self._left = self._right = name
             self._effect = None
@@ -529,8 +543,8 @@ class EarStateTracker:
             name = "off" if pp == 0x1D else (
                 PALETTE.get(pp, ("unknown", None))[0]
             )
-            if content[4] & 0x80:  # TSV right-only form (91 0E pp|80)
-                self._right = name
+            if content[4] & 0x80:  # TSV left-only form (91 0E pp|80)
+                self._left = name
             else:
                 self._left = self._right = name
             self._effect = None
@@ -551,11 +565,11 @@ class EarStateTracker:
                     self._left = self._right = EAR_STATE_OFF
                     self._effect = None
 
-        # Right-only simple forms (`90 68..6F`, TSV color-X-right rows):
-        # touch ONLY the right slot -- composing our own TX, we rely on
-        # the left ear keeping its color through these.
+        # Left-only simple forms (`90 68..6F`, TSV color-X-left rows):
+        # touch ONLY the left slot -- composing our own TX, we rely on
+        # the right ear keeping its color through these.
         elif len(content) == 1 and 0x68 <= content[0] <= 0x6F:
-            self._right = (
+            self._left = (
                 EAR_STATE_OFF if content[0] == 0x68
                 else _color_name(0x60 + content[0] - 0x68)
             )
