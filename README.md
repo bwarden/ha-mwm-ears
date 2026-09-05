@@ -276,6 +276,16 @@ Fields:
   program adopts them (rig-verified: pulse then blue = both pulsing blue).
   Effects run on the ear's current palette; park/`48 XX` frames carry timing,
   not colour.
+- `incantation` — instead of a bare `effect`, run a verified *show
+  incantation*: a single fused phrase in the exact shape captured from real
+  park/wand/hat transmitters (per-ear palette + simple other ear + cycle
+  timer + effect invoke + closing `D0` clause), reproduced byte-for-byte
+  from the corpus. One of `pulse`, `strobe`, `fade` (out countdown), or
+  `rotation` (colour rotation + delayed fade-out). `pulse` reads a palette
+  shade from `left_color` and the simple colour from `right_color`/`color`;
+  the others default to the current colours. See
+  `docs/mwm-show-protocol.md` §13 for the source frames each derives from
+  and `_mwm/incant.py` for the builders.
 
 Identical picks collapse to one frame, and off-ing an already dark ear is a
 no-op, so the rig is not spammed by re-bursts. This action is the intended

@@ -84,6 +84,22 @@ async def _set_state_service(call: ServiceCall) -> None:
     right = _parse_state_pick(call.data.get("right_color"))
     both = _parse_state_pick(call.data.get("color"))
 
+    incantation = call.data.get("incantation")
+    if incantation is not None:
+        family = str(incantation).strip().lower()
+        if left is None:
+            left = store._ear_color(LEFT)
+        if right is None:
+            right = store._ear_color(RIGHT)
+        label = f"show {family}"
+        try:
+            await store.apply_incantation(
+                family, label=label, left=left, right=right
+            )
+        except ValueError as err:
+            raise ServiceValidationError(str(err)) from err
+        return
+
     effect = None
     effect_spec = call.data.get("effect")
     if effect_spec:

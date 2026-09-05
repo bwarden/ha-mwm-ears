@@ -25,6 +25,10 @@ if __package__:  # normal HA component context
         EFFECT_COMPANION,
         EarStateTracker,
         build_frame,
+        build_pulse,
+        build_strobe,
+        build_fade,
+        rotation_phrase,
         describe_bundle,
         describe_frame,
         effect_label,
@@ -43,6 +47,10 @@ else:  # standalone test harness: _bootstrap registers us as "mwm"
         EFFECT_COMPANION,
         EarStateTracker,
         build_frame,
+        build_pulse,
+        build_strobe,
+        build_fade,
+        rotation_phrase,
         describe_bundle,
         describe_frame,
         effect_label,
@@ -723,6 +731,69 @@ class EarPairState:
         if companion is not None:
             content += [0x58, companion]
         frames = [build_frame(content), *color_frames]
+        self._hold_frames = frames
+        await self._send_group(frames, BURST_REPEATS)
+
+    async def apply_incantation(
+        self,
+        family: str,
+        *,
+        label: str,
+        left: tuple[str, int] | None = None,
+        right: tuple[str, int] | None = None,
+        cycle_mod: int | None = None,
+    ) -> None:
+        """Run a verified show-command *incantation* -- a single fused phrase
+        in the real corpus's shape (per-ear palette + simple other ear +
+        cycle timer + effect invoke + closing D0 clause), not the separate
+        effect-then-color frames of `apply_effect`.
+
+        Families are the mined show phrases in _mwm/incant.py, each derived
+        from specific park/hat frames (python/mwm/incant.py documents the
+        source hex + occurrence counts):
+
+          * ``pulse``   left-ear palette shade + right simple color,
+                        ``58 F0`` + ``48 04`` + ``D0 45 83``.  ``left`` must
+                        be a palette pick; ``right`` a simple pick.
+          * ``strobe``  white (or `right`) solid + ``58 tt`` + ``48 84``
+                        strobe-into-running-program.
+          * ``fade``    fade-out countdown ``F? 48 85 58 tt`` (the park
+                        workhorse, 1375 occurrences).
+          * ``rotation`` color-rotation set-piece + ~1 s delayed fade-out.
+
+        The fused phrase is the honest single-burst reproduction of what
+        park/wand/hat controllers transmit, so a home show that wants to
+        look like the real thing sends these.  `cycle_mod` adds the
+        ``D0 42 tt`` pulse cycle-rate clause.
+        """
+        family = family.lower()
+        if family == "pulse":
+            if left is None or left[0] != "palette":
+                raise ValueError("incantation 'pulse' needs a palette left ear")
+            right_simple = right[1] if right else self.codes[RIGHT]
+            frames = [build_pulse(left[1], right_simple, cycle_mod=cycle_mod)]
+            label = label or effect_label(0x04)
+        elif family == "strobe":
+            color = right[1] if right else DEFAULT_COLOR_CODE
+            frames = [build_strobe(color)]
+            label = label or effect_label(0x84)
+        elif family == "fade":
+            frames = [build_fade()]
+            label = label or effect_label(0x85)
+        elif family == "rotation":
+            color = right[1] if right else DEFAULT_COLOR_CODE
+            frames = [rotation_phrase(color)]
+            label = label or effect_label(0x11)
+        else:
+            raise ValueError(f"unknown incantation '{family}'")
+
+        self.running_effect = label
+        if left is not None:
+            self._record_color(LEFT, left)
+        if right is not None:
+            self._record_color(RIGHT, right)
+        self.desired_on = {LEFT: True, RIGHT: True}
+        self.resume()
         self._hold_frames = frames
         await self._send_group(frames, BURST_REPEATS)
 

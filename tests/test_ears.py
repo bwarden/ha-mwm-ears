@@ -123,13 +123,61 @@ class ApplyTests(unittest.TestCase):
         self.assertEqual(list(color[1:-1]), [0x67])
 
     def test_effect_companion_comes_from_library_catalogue(self):
-        # The integration must not re-derive effect framing; it drives the
-        # 58 companion straight from mwm.EFFECT_COMPANION (single source of
         # truth in the protocol library).  Guard that centralization.
         self.assertEqual(ears.EFFECT_COMPANION, mwm.EFFECT_COMPANION)
         self.assertEqual(mwm.EFFECT_COMPANION, {0x04: 0xF0})
         self.assertEqual(mwm.EFFECTS["Pulse"]["companion"], 0xF0)
         self.assertIsNone(mwm.EFFECTS["Single flash"]["companion"])
+
+    def test_incantation_pulse_fuses_palette_then_simple(self):
+        # The mined incantations reproduce the exact corpus frames (see
+        # docs/mwm-show-protocol.md section 9): one fused phrase, not the
+        # separate effect-then-color frames apply_effect sends.
+        h = Harness()
+        run(h.pair.apply_incantation(
+            "pulse", label="show pulse",
+            left=("palette", 0x01), right=("simple", 0x61),
+        ))
+        frame = bytes.fromhex(h.calls[0][0])
+        self.assertEqual(
+            frame.hex().upper(), "9B96260E816158F04804D0458323"
+        )
+        self.assertEqual(len(h.calls), ears.BURST_REPEATS + 1)
+
+    def test_incantation_strobe_reproduces_corpus(self):
+        h = Harness()
+        run(h.pair.apply_incantation("strobe", label="show strobe"))
+        frame = bytes.fromhex(h.calls[0][0])
+        self.assertEqual(frame.hex().upper(), "96F12467580248848D")
+
+    def test_incantation_fade_reproduces_corpus(self):
+        h = Harness()
+        run(h.pair.apply_incantation("fade", label="show fade"))
+        frame = bytes.fromhex(h.calls[0][0])
+        self.assertEqual(frame.hex().upper(), "94F248855805DD")
+
+    def test_incantation_rotation_reproduces_corpus(self):
+        h = Harness()
+        run(h.pair.apply_incantation(
+            "rotation", label="show rotation", right=("simple", 0x62),
+        ))
+        frame = bytes.fromhex(h.calls[0][0])
+        self.assertEqual(
+            frame.hex().upper(), "9BF1244811D03D01626AFA48851C"
+        )
+
+    def test_incantation_pulse_requires_palette_left(self):
+        h = Harness()
+        with self.assertRaises(ValueError):
+            run(h.pair.apply_incantation(
+                "pulse", label="show pulse",
+                left=("simple", 0x61), right=("simple", 0x61),
+            ))
+
+    def test_incantation_unknown_family_rejected(self):
+        h = Harness()
+        with self.assertRaises(ValueError):
+            run(h.pair.apply_incantation("bogus", label="nope"))
 
 
 class TurnOnRestoreTests(unittest.TestCase):

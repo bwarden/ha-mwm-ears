@@ -51,6 +51,11 @@
           "name": "Effect",
           "description": "Room-wide effect program run after any color changes. Effects are not per-ear.",
           "example": "Color rotation"
+        },
+        "incantation": {
+          "name": "Incantation",
+          "description": "Optional: instead of a bare effect, run a verified \"show incantation\" -- a single fused phrase in the shape mine park/wand/hat captures use. One of pulse, strobe, fade, rotation; uses the color fields for the palette/simple slots.",
+          "example": "pulse"
         }
       }
     },
