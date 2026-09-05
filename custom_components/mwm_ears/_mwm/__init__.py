@@ -54,6 +54,12 @@ from .protocol import (
     timings_for_frame,
 )
 from .timings import decode_timings
+from .incant import (
+    build_fade,
+    build_pulse,
+    build_strobe,
+    rotation_phrase,
+)
 from .command import MwmCommand
 from .decode import (
     EFFECTS,
@@ -90,6 +96,10 @@ __all__ = [
     "tasmota_timings",
     "timings_for_frame",
     "decode_timings",
+    "build_fade",
+    "build_pulse",
+    "build_strobe",
+    "rotation_phrase",
     "MwmCommand",
     "PALETTE",
     "SIMPLE_COLORS",

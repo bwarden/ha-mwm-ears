@@ -39,6 +39,7 @@ _LIB_MODULES = [
     "__init__.py",
     "command.py",
     "decode.py",
+    "incant.py",
     "palette.py",
     "protocol.py",
     "timings.py",
