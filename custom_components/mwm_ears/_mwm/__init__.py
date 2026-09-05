@@ -46,6 +46,7 @@ from .protocol import (
     build_group_palette,
     crc8_dallas,
     decode_beacon_clock,
+    frame_complete,
     frame_is_valid,
     irsend_payload,
     parse_frame_hex,
@@ -56,6 +57,7 @@ from .protocol import (
 from .timings import decode_timings
 from .incant import (
     build_fade,
+    build_off,
     build_pulse,
     build_strobe,
     rotation_phrase,
@@ -89,6 +91,7 @@ __all__ = [
     "build_group_palette",
     "crc8_dallas",
     "decode_beacon_clock",
+    "frame_complete",
     "frame_is_valid",
     "irsend_payload",
     "parse_frame_hex",
@@ -97,6 +100,7 @@ __all__ = [
     "timings_for_frame",
     "decode_timings",
     "build_fade",
+    "build_off",
     "build_pulse",
     "build_strobe",
     "rotation_phrase",

@@ -84,12 +84,43 @@ def _normalize(hex_or_bytes: str | bytes) -> bytes:
         raise ValueError(f"non-hex input: {hex_or_bytes!r}") from err
 
 
-def frame_is_valid(hex_or_bytes: str | bytes) -> tuple[bool, str]:
+def frame_complete(hex_or_bytes: str | bytes) -> bytes | None:
+    """Return `hex_or_bytes` completed to a full valid frame, or None.
+
+    Appends the missing CRC-8 when the input is exactly one byte short of
+    the length rule (low nibble of byte 0 == total - 3), i.e. a hand-typed
+    frame that dropped its trailing checksum.  A frame that already has its
+    CRC is returned unchanged; anything else (bad length, non-0x9x header,
+    system message) returns None.
+    """
+    try:
+        data = _normalize(hex_or_bytes)
+    except ValueError:
+        return None
+    if not data or (data[0] & 0xF0) != 0x90:
+        return None
+    length_nibble = data[0] & 0x0F
+    if length_nibble == len(data) - 2:
+        return data + bytes([crc8_dallas(data)])
+    if length_nibble == len(data) - 3:
+        return data
+    return None
+
+
+def frame_is_valid(
+    hex_or_bytes: str | bytes, *, auto_crc: bool = False
+) -> tuple[bool, str]:
     """Validate framing; returns (ok, reason).
 
     Accepts spaced or packed hex. Show messages must satisfy the length rule
     (low nibble of byte 0 == total - 3) and CRC-8/Dallas. 55 AA system
     messages validate via the additive payload checksum.
+
+    With ``auto_crc=True``, a frame that is exactly one byte short of the
+    length rule is completed by computing and appending the missing CRC-8
+    before validating -- hand-typed hex from the docs often drops the
+    trailing checksum, so this lets ``hex 9C 20 24 0D … D0 42 06`` validate
+    as if the full ``…06 70`` frame were provided.
     """
     try:
         data = _normalize(hex_or_bytes)
@@ -102,12 +133,21 @@ def frame_is_valid(hex_or_bytes: str | bytes) -> tuple[bool, str]:
         if data[-1] != want:
             return False, f"additive checksum mismatch: got {data[-1]:02X} want {want:02X}"
         return True, ""
+    if auto_crc:
+        completed = frame_complete(data)
+        if completed is None:
+            completed = data
+        data = completed
     hdr = data[0]
     if (hdr & 0xF0) != 0x90:
         return False, f"header {hdr:02X} is not 0x9x"
     length_nibble = hdr & 0x0F
     if length_nibble != len(data) - 3:
-        return False, f"length rule violated: L={length_nibble} but total={len(data)}"
+        return False, (
+            f"length rule violated: L={length_nibble} but total={len(data)} "
+            f"(frame is header 0x9L + content (L+1) + CRC-8, so total must be "
+            f"{length_nibble}+3={length_nibble + 3})"
+        )
     want = crc8_dallas(data[:-1])
     if data[-1] != want:
         return False, f"CRC mismatch: got {data[-1]:02X} want {want:02X}"

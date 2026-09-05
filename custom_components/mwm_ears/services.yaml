@@ -88,8 +88,9 @@ set_state:
         -- a single fused phrase in the exact shape mine park/wand/hat
         captures use (per-ear palette + simple other ear + cycle timer +
         effect invoke + closing D0 clause). One of pulse, strobe, fade,
-        rotation; uses the color fields for the palette/simple slots. See
-        docs/mwm-show-protocol.md for the source frames each is derived from.
+        rotation, or off (stop the program); uses the color fields for the
+        palette/simple slots. See docs/mwm-show-protocol.md for the source
+        frames each is derived from.
       example: pulse
       selector:
         text: null
