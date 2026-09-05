@@ -280,10 +280,12 @@ Fields:
   incantation*: a single fused phrase in the exact shape captured from real
   park/wand/hat transmitters (per-ear palette + simple other ear + cycle
   timer + effect invoke + closing `D0` clause), reproduced byte-for-byte
-  from the corpus. One of `pulse`, `strobe`, `fade` (out countdown), or
-  `rotation` (colour rotation + delayed fade-out). `pulse` reads a palette
+  from the corpus. One of `pulse`, `strobe`, `fade` (out countdown),
+  `rotation` (colour rotation + delayed fade-out), or `off` (stop the
+  program: catalogue invoke-off `48 1F`; with no `left_color`/`right_color`
+  it instead darkens both ears via `apply_off`). `pulse` reads a palette
   shade from `left_color` and the simple colour from `right_color`/`color`;
-  the others default to the current colours. See
+  the other effect incantations default to the current colours. See
   `docs/mwm-show-protocol.md` §13 for the source frames each derives from
   and `_mwm/incant.py` for the builders.
 

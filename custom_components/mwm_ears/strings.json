@@ -54,7 +54,7 @@
         },
         "incantation": {
           "name": "Incantation",
-          "description": "Optional: instead of a bare effect, run a verified \"show incantation\" -- a single fused phrase in the shape mine park/wand/hat captures use. One of pulse, strobe, fade, rotation; uses the color fields for the palette/simple slots.",
+          "description": "Optional: instead of a bare effect, run a verified \"show incantation\" -- a single fused phrase in the shape mine park/wand/hat captures use. One of pulse, strobe, fade, rotation, or off (stop the program); uses the color fields for the palette/simple slots.",
           "example": "pulse"
         }
       }

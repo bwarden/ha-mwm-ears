@@ -28,6 +28,7 @@ if __package__:  # normal HA component context
         build_pulse,
         build_strobe,
         build_fade,
+        build_off,
         rotation_phrase,
         describe_bundle,
         describe_frame,
@@ -50,6 +51,7 @@ else:  # standalone test harness: _bootstrap registers us as "mwm"
         build_pulse,
         build_strobe,
         build_fade,
+        build_off,
         rotation_phrase,
         describe_bundle,
         describe_frame,
@@ -734,6 +736,21 @@ class EarPairState:
         self._hold_frames = frames
         await self._send_group(frames, BURST_REPEATS)
 
+    async def apply_off(self) -> None:
+        """Stop the current program and switch both ears off.
+
+        Sends the catalogue's "invoke off" phrase (`91 48 1F B2`) to stop
+        whatever program is running, then the both-off keep-alive
+        (`90 60 A6`).  Clears held program state so enforcement does not
+        re-assert the dead phrase.
+        """
+        self.running_effect = None
+        self.palette_code = {LEFT: None, RIGHT: None}
+        self.codes = {LEFT: EAR_OFF_CODE, RIGHT: EAR_OFF_CODE}
+        self.desired_on = {LEFT: False, RIGHT: False}
+        self._hold_frames = [build_off(), build_frame([0x60])]
+        await self._send_group(self._hold_frames, BURST_REPEATS)
+
     async def apply_incantation(
         self,
         family: str,
@@ -760,6 +777,8 @@ class EarPairState:
           * ``fade``    fade-out countdown ``F? 48 85 58 tt`` (the park
                         workhorse, 1375 occurrences).
           * ``rotation`` color-rotation set-piece + ~1 s delayed fade-out.
+          * ``off``      stop the program: invoke off ``48 1F`` (or, if no
+                        colors are given, shut both ears down).
 
         The fused phrase is the honest single-burst reproduction of what
         park/wand/hat controllers transmit, so a home show that wants to
@@ -767,7 +786,13 @@ class EarPairState:
         ``D0 42 tt`` pulse cycle-rate clause.
         """
         family = family.lower()
-        if family == "pulse":
+        if family == "off":
+            if left is None and right is None:
+                await self.apply_off()
+                return
+            frames = [build_off()]
+            label = label or "off"
+        elif family == "pulse":
             if left is None or left[0] != "palette":
                 raise ValueError("incantation 'pulse' needs a palette left ear")
             right_simple = right[1] if right else self.codes[RIGHT]

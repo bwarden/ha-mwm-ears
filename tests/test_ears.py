@@ -179,6 +179,33 @@ class ApplyTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             run(h.pair.apply_incantation("bogus", label="nope"))
 
+    def test_incantation_off_without_colors_clears_state(self):
+        # No colors given -> apply_off(): invoke off then both-off, and the
+        # held program state is cleared so enforcement stops re-asserting.
+        h = Harness()
+        run(h.pair.apply_incantation("off", label="show off"))
+        self.assertEqual(
+            bytes.fromhex(h.calls[0][0]).hex().upper(), "91481FB2"
+        )
+        self.assertEqual(
+            bytes.fromhex(h.calls[1][0]).hex().upper(), "9060A6"
+        )
+        self.assertIsNone(h.pair.running_effect)
+        self.assertFalse(any(h.pair.desired_on.values()))
+
+    def test_incantation_off_with_colors_invokes_off(self):
+        # With colors the pair is not asked to darken, just to stop the
+        # program: the catalogue invoke-off phrase is the stop.
+        h = Harness()
+        run(h.pair.apply_incantation(
+            "off", label="show off",
+            left=("simple", 0x61), right=("simple", 0x61),
+        ))
+        self.assertEqual(
+            bytes.fromhex(h.calls[0][0]).hex().upper(), "91481FB2"
+        )
+        self.assertEqual(h.pair.running_effect, "show off")
+
 
 class TurnOnRestoreTests(unittest.TestCase):
     def test_fresh_pair_defaults_to_white(self):
