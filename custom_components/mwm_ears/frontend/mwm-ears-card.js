@@ -273,7 +273,7 @@ class MwmEarsCard extends HTMLElement {
     const entityId = this._entityOf(sideKey);
 
     const grid = document.createElement("div");
-    grid.className = "swatches";
+    grid.className = "swatches palette-grid";
 
     for (const c of catalog) {
       const rgb = c.rgb || [0, 0, 0];
@@ -478,7 +478,17 @@ class MwmEarsCard extends HTMLElement {
       .palette, .effects { margin: 0 0 18px; }
       .heading { font-size: .85rem; font-weight: 600; color: var(--secondary-text-color,#777);
                  text-transform: uppercase; letter-spacing: .03em; margin: 0 0 8px; }
+      /* Left / Both / Right sit side-by-side; On/Off and Effects stay full-width. */
+      .palettes { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr));
+                  gap: 12px; align-items: start; margin: 0 0 18px; }
+      .palettes .palette { margin: 0; min-width: 0; }
+      .palettes .heading { text-align: center; }
       .swatches { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+      /* A palette is a fixed 7-column grid so the 7 simple one-bit colors
+         (always first in the catalog) fill the top row; the 30 palette
+         shades flow into the rows below. */
+      .palette-grid { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr));
+                      gap: 5px; }
       .swatch { position: relative; width: 46px; height: 46px; border-radius: 50%; margin: 24px 2px 2px;
                 border: 2px solid rgba(0,0,0,.15); cursor: pointer; padding: 0;
                 box-shadow: 0 1px 3px rgba(0,0,0,.25); transition: transform .08s ease; }
@@ -487,6 +497,17 @@ class MwmEarsCard extends HTMLElement {
       .swatch span { position: absolute; left: 50%; top: calc(100% + 2px); transform: translateX(-50%);
                      font-size: .55rem; color: var(--secondary-text-color,#777); white-space: nowrap;
                      text-shadow: none; }
+      /* Compact 7-wide swatches: square cells that scale down; the name is a
+         hover chip instead of a caption (captions would collide at this
+         density). The per-ear "Off" label stays visible. */
+      .palette-grid .swatch { width: 100%; max-width: 34px; height: auto; aspect-ratio: 1;
+                              margin: 0 auto; border-width: 1px; }
+      .palette-grid .swatch:hover { transform: none; }
+      .palette-grid .swatch span { top: 50%; left: 50%; transform: translate(-50%, -50%);
+                     background: rgba(0,0,0,.72); color: #fff; padding: 1px 3px;
+                     border-radius: 3px; opacity: 0; pointer-events: none; z-index: 2; }
+      .palette-grid .swatch:hover span { opacity: 1; }
+      .palette-grid .off-ear span { opacity: 1; }
       .swatch.on { background: linear-gradient(135deg,#ffe259,#ffa751); margin-top: 2px; }
       .swatch.on span, .swatch.off span { color: #333; }
       .swatch.off { background: #222; }
@@ -541,15 +562,18 @@ class MwmEarsCard extends HTMLElement {
     }
 
     card.appendChild(this._buildOnOff());
-    card.appendChild(this._buildPaletteSection("left_entity", "Left Ear",
+    const palettes = document.createElement("div");
+    palettes.className = "palettes";
+    palettes.appendChild(this._buildPaletteSection("left_entity", "Left Ear",
       "Left picks use the verified left-only form directly.",
       bothState,
       { enabled: !!this._sides.left }));
-    card.appendChild(this._buildPaletteSection("entity", "Both Ears",
+    palettes.appendChild(this._buildPaletteSection("entity", "Both Ears",
       "Sets both ears to the chosen shade (the protocol's native form).", bothState));
-    card.appendChild(this._buildPaletteSection("right_entity", "Right Ear",
+    palettes.appendChild(this._buildPaletteSection("right_entity", "Right Ear",
       "Right picks compose a fused both+restore frame so the left ear keeps its color.", bothState,
       { enabled: !!this._sides.right }));
+    card.appendChild(palettes);
     card.appendChild(this._buildEffects(bothState));
     if (this._batch) card.appendChild(this._buildBatchBar());
   }

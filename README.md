@@ -197,6 +197,12 @@ title: My Ears
   (`custom_components/mwm_ears/_mwm/palette.py::color_palette`), so the card
   always shows exactly the colors the integration can represent — no palette
   copy in JS.
+- The three palettes sit side-by-side — **Left**, **Both**, **Right** — each
+  a fixed 7-wide grid, so the 7 one-bit simple colors always fill the top
+  row and the 30 palette shades flow into the rows below. At this density
+  each swatch is a square cell whose name appears as a hover chip (the
+  per-ear **Off** label stays visible); the On/Off and Effects rows stay
+  full-width.
 
 ### Behavior
 
