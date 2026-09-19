@@ -49,6 +49,28 @@ EFFECT_LABELS: dict[int, str] = {
     0x86: "fade up",
 }
 
+# Demo-mode index catalog: the `48 ss` values the idle/demo beacon reports
+# as the program an ear has re-picked to run autonomously (docs §5 and
+# samples/headband-20260822.log, 2026-08-22/23).  Distinct from the
+# invokable `48 XX` effect catalog above: these are the indices actually
+# observed CYCLING in live demo mode of their own accord, plus where each
+# also has an invoked-effect name it shares it.  Observed cycling order in
+# the headband stream (first appearance): 16 -> 18 -> 88 -> 14 -> 00 ->
+# 15 -> 17; `48 88` dominates demo mode ([H] hat-observed), `48 17` also
+# appears in park captures (`96 42 00 00 48 17 0C 40 2F`, [P]).  Entries
+# only numbered (no name) are stored show programs with no verified label
+# yet -- they are catalogued so a decoder can say "demo program x, on the
+# hat" instead of inventing a name.
+DEMO_BEACONS: dict[int, str] = {
+    0x00: "random effect",
+    0x14: "stored demo program 0x14 (unlabelled)",
+    0x15: "stored demo program 0x15 (unlabelled)",
+    0x16: "color cycle with blue return",
+    0x17: "stored demo program 0x17 (unlabelled)",
+    0x18: "stored demo program 0x18 (unlabelled)",
+    0x88: "color sequence (dominates demo mode)",
+}
+
 # Curated effect catalog surfaced to Home Assistant (in the mwm_ears HA
 # repo: light.py effect_list, the set_state action's effect selector):
 # HA-facing labels mapped to the stored effect program indices.  A superset
@@ -93,12 +115,24 @@ EFFECTS: dict[str, dict] = {
 
 
 def effect_label(index: int) -> str:
-    """Human name for an invoked effect index, labelled or not."""
+    """Human name for an invoked effect index, labeled or not."""
     if index in EFFECT_LABELS:
         return EFFECT_LABELS[index]
     if 0x87 <= index <= 0x8F:
         return f"color sequence {index:#04x}"
     return f"effect {index:#04x}"
+
+
+def demo_beacon_label(index: int) -> str:
+    """Human name for a demo-mode beacon's reported program index.
+
+    Prefers the observed demo catalog (DEMO_BEACONS), which knows which
+    indices truly cycle in demo mode; falls back to the invoked-effect
+    naming when a beacon reports an index never seen cycling.
+    """
+    if index in DEMO_BEACONS:
+        return DEMO_BEACONS[index]
+    return effect_label(index)
 
 
 def _color_name(simple_code: int) -> str:
@@ -112,6 +146,71 @@ def _palette_desc(code: int) -> str:
         PALETTE[masked][0] if masked in PALETTE else f"palette[{masked:#04x}]"
     )
     return f"{base}{', per-ear register' if high else ''}"
+
+
+def _time_cell(label: str, value: list[int]) -> str:
+    """One timing field as a comparison-safe string, e.g. '58-0x20'."""
+    hs = " ".join(f"{v:02X}" for v in value)
+    return f"{label} {hs}"
+
+
+def extract_timing_fields(content: list[int] | bytes) -> list[str]:
+    """Timing-bearing opcodes in a phrase body, in order.
+
+    These are the bytes that pace an effect's cycle (the ``58 tt`` /
+    ``59 aa bb`` / ``5A a b c`` timers and the ``D0 mm yy`` modifiers).
+    Two frames that run the SAME command at DIFFERENT points in the cycle
+    differ exactly here (plus the beacon clock tick) -- so this is the
+    machine-readable fingerprint for grouping siblings of one effect.
+    Fields that appear more than once (stored in the list) preserve their
+    order; callers that want identity use the list as-is.
+    """
+    body = list(content)
+    out: list[str] = []
+    i = 0
+    n = len(body)
+    while i < n:
+        b = body[i]
+        if b == 0x58 and i + 1 < n:
+            out.append(_time_cell("58", body[i + 1 : i + 2]))
+            i += 2
+        elif b == 0x59 and i + 2 < n:
+            out.append(_time_cell("59", body[i + 1 : i + 3]))
+            i += 3
+        elif b == 0x5A and i + 3 < n:
+            out.append(_time_cell("5A", body[i + 1 : i + 4]))
+            i += 4
+        elif b == 0xD0 and i + 2 < n and body[i + 1] in (0x3D, 0x42):
+            out.append(_time_cell("D0", body[i + 1 : i + 3]))
+            i += 3
+        else:
+            i += 1
+    return out
+
+
+def extract_color_fields(content: list[int] | bytes) -> list[str]:
+    """Color-bearing opcodes in a phrase body, in order.
+
+    Simple ``6X`` / left-only ``6X`` and palette ``0E pp`` selectors.  Two
+    frames that differ in color but share everything else are separate
+    commands, so this (with timing) disambiguates "same hue, next phase"
+    from "different color entirely".
+    """
+    body = list(content)
+    out: list[str] = []
+    i = 0
+    n = len(body)
+    while i < n:
+        b = body[i]
+        if 0x60 <= b <= 0x6F:
+            out.append(f"color {b:02X}")
+            i += 1
+        elif b == 0x0E and i + 1 < n and (body[i + 1] & 0x7F) <= 0x1D:
+            out.append(f"palette {body[i + 1] & 0x7F:02X}")
+            i += 2
+        else:
+            i += 1
+    return out
 
 
 def _walk_tokens(content: list[int] | bytes) -> tuple[list[str], int | None]:
@@ -314,7 +413,7 @@ def describe_content(content: list[int] | bytes) -> dict:
         clock_tick = body[6] if len(body) > 6 else None
         summary = (
             "idle beacon (demo effect running: "
-            f"{effect_label(body[4])})"
+            f"{demo_beacon_label(body[4])})"
         )
         if clock_tick is not None:
             summary += f" [clock={clock_tick:02X}]"
@@ -323,6 +422,12 @@ def describe_content(content: list[int] | bytes) -> dict:
             "summary": summary,
             "demo_effect": body[4],
             "clock_tick": clock_tick,
+            # Timing/color fingerprints let a caller tell "same command, next
+            # cycle phase" from genuinely different traffic: the beacon's
+            # effect index stays while ONLY the clock tick and timing bytes
+            # move across a cycle.
+            "timing": extract_timing_fields(body),
+            "colors": extract_color_fields(body),
             "tokens": [],
             "effect": None,
         }
@@ -337,6 +442,8 @@ def describe_content(content: list[int] | bytes) -> dict:
         "summary": "; ".join(tokens),
         "tokens": tokens,
         "effect": effect,
+        "timing": extract_timing_fields(body),
+        "colors": extract_color_fields(body),
     }
 
 
@@ -421,6 +528,7 @@ def describe_bundle(frames: list[bytes]) -> dict | None:
             i += 2
         else:
             i += 1
+    phrase_body = phrase[1:-1]
     return {
         "kind": "bundle",
         "phrase_hex": phrase.hex().upper(),
@@ -428,6 +536,12 @@ def describe_bundle(frames: list[bytes]) -> dict | None:
         # Structured companion parameters, parallel to the rendered
         # "parameters" text so entities can expose machine-readable rows.
         "params": parts,
+        # Timing/color fingerprints of the phrase itself: two bundles whose
+        # EFFECT (indices+params) is identical but whose timing fields
+        # differ are the SAME command pushed at different points in its
+        # cycle -- the signal that teaches pacing, not a new command.
+        "timing": extract_timing_fields(phrase_body),
+        "colors": extract_color_fields(phrase_body),
         "summary": (
             f"A-B-A' bundle: {describe_frame(phrase)['summary']} "
             f"[parameters: {'; '.join(parts) if parts else 'opaque companion'}]"
@@ -598,3 +712,69 @@ class EarStateTracker:
         if self._effect and not both_off:
             parts.append(f"running: {self._effect}")
         return ", ".join(parts)
+
+
+# ---------------------------------------------------------------------------
+# Show-cue taxonomy (docs/mwm-show-protocol.md section 3): how a show
+# controller cue classifies operationally, so a show-script runner can treat
+# a whole countdown block as ONE master event instead of the raw member
+# fan-out.  The token names follow the Gemini-derived taxonomy (PRE_BUFFER /
+# IMMEDIATE / GROUP_PICKER / AMBIENT); the frame-shape rules below are
+# cross-checked against the corpus's documented opcode families.
+# ---------------------------------------------------------------------------
+
+CUE_PRE_BUFFER = "PRE_BUFFER_EVENT"
+CUE_IMMEDIATE = "IMMEDIATE_EVENT"
+CUE_GROUP_PICKER = "GROUP_PICKER_CUE"
+CUE_AMBIENT = "AMBIENT_LOOP_BEAT"
+CUE_OTHER = "OTHER"
+
+_CUE_GROUP_HEADS = ((0x20, 0x89), (0x24, 0x0D))  # group picker / range bounds
+
+
+def _has_ambient_timing(content: list[int]) -> bool:
+    """True when the phrase carries the pulse/ambient timing clause -- the
+    ``58 F0`` invoke followed by the ``48 04`` cycle open (pulse family;
+    the strobe's ``48 84`` and the fade's bare ``58 tt`` do not match)."""
+    for i in range(len(content) - 2):
+        if content[i] == 0x58 and content[i + 1] == 0xF0:
+            for j in range(i + 2, len(content) - 1):
+                if content[j] == 0x48 and content[j + 1] == 0x04:
+                    return True
+    return False
+
+
+def cue_class(frame: bytes) -> str:
+    """Operational class of a show cue, per docs/mwm-show-protocol.md §3:
+
+    PRE_BUFFER_EVENT    delay-led countdown member (F1..FD): a lookahead cue
+                        that sets the crowd's absolute fire time at
+                        receipt+delay.  A whole countdown run is ONE master
+                        event -- the interpreter schedules the cue and the
+                        members carry the target (collapse @ + 1300).
+    IMMEDIATE_EVENT     the ``20`` go copy, or a bare ``48``/``24 48``
+                        effect invoke: snaps the ears' state now.
+    GROUP_PICKER_CUE    group-addressed phrase (``20 89 A0..26`` range
+                        bounds or ``24 0D`` override): assigns a contiguous
+                        ear range to a state while others stay put.
+    AMBIENT_LOOP_BEAT   the fused pulse/ambient family (``58 F0 .. 48 04``
+                        timing clause): a sustained per-ear loop.
+    OTHER               static colors, palette shades, clock writes, 55AA.
+    """
+    if len(frame) < 3:
+        return CUE_OTHER
+    content = list(frame[1:-1])
+    if not content:
+        return CUE_OTHER
+    if _has_ambient_timing(content):
+        return CUE_AMBIENT
+    if tuple(content[:2]) in _CUE_GROUP_HEADS:
+        return CUE_GROUP_PICKER
+    if content[0] in range(0xF1, 0xFE):
+        return CUE_PRE_BUFFER
+    if content[0] == 0x20:
+        return CUE_IMMEDIATE
+    if content[0] == 0x48 or (
+            content[0] == 0x24 and len(content) > 1 and content[1] == 0x48):
+        return CUE_IMMEDIATE
+    return CUE_OTHER

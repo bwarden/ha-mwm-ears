@@ -70,18 +70,20 @@ class BeaconTests(unittest.TestCase):
     def test_live_variant_recognised(self):
         desc = describe_content(self.LIVE_BEACON)
         self.assertEqual(desc["kind"], "beacon")
-        # ss=0x14 has no verified name yet; the generic label still shows.
-        self.assertIn("idle beacon (demo effect running: effect 0x14)",
-                      desc["summary"])
+        # ss=0x14 appears in the observed demo catalogue but has no verified
+        # name; the catalogue labels it as a stored program.
+        self.assertIn("idle beacon (demo effect running: stored demo program"
+                      " 0x14 (unlabelled))", desc["summary"])
 
     def test_park_variant_recognised(self):
         desc = describe_content(self.PARK_BEACON)
         self.assertEqual(desc["kind"], "beacon")
-        self.assertIn("effect 0x17", desc["summary"])
+        self.assertIn("stored demo program 0x17 (unlabelled)",
+                      desc["summary"])
 
     def test_named_demo_effect_labelled(self):
         body = [0x42, 0x00, 0x00, 0x48, 0x88, 0x0C, 0x40]
-        self.assertIn("color sequence 0x88",
+        self.assertIn("color sequence (dominates demo mode)",
                       describe_content(body)["summary"])
 
     def test_near_beacon_rejected(self):
