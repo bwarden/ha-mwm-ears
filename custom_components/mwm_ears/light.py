@@ -51,14 +51,19 @@ _services_registered = False
 async def _select_color_service(call: ServiceCall) -> None:
     """Handle mwm_ears.select_color: send one exact catalog color."""
     target = call.data.get(ATTR_ENTITY_ID)
-    entity_id = target[0] if isinstance(target, (list, tuple)) else target
-    light = _BY_ENTITY_ID.get(entity_id)
-    if light is None:
-        raise ServiceValidationError(f"not an MWM Ears light entity: {entity_id}")
+    ids = target if isinstance(target, (list, tuple)) else [target]
+    lights = [_BY_ENTITY_ID[i] for i in ids if i in _BY_ENTITY_ID]
+    _LOGGER.debug(
+        "mwm_ears.select_color targets %s -> stores %s",
+        ids, [l._store.room_name for l in lights],
+    )
+    if not lights:
+        raise ServiceValidationError("no MWM Ears light entity targeted")
     color = call.data.get("color")
     if not isinstance(color, str):
         raise ServiceValidationError("'color' must be a kind:value string")
-    await light.async_select_color(color)
+    for light in lights:
+        await light.async_select_color(color)
 
 
 async def _set_state_service(call: ServiceCall) -> None:
@@ -73,34 +78,18 @@ async def _set_state_service(call: ServiceCall) -> None:
     """
     target = call.data.get(ATTR_ENTITY_ID)
     ids = target if isinstance(target, (list, tuple)) else [target]
-    light = None
-    for entity_id in ids:
-        if entity_id in _BY_ENTITY_ID:
-            light = _BY_ENTITY_ID[entity_id]
-            break
-    if light is None:
-        raise ServiceValidationError("no MWM Ears light entity targeted")
-    store: EarPairState = light._store
+    # Every targeted room gets the command; the three side entities of one
+    # pair share a store, so dedupe on the store to transmit once per room.
+    stores = _targeted_stores(call)
 
     left = _parse_state_pick(call.data.get("left_color"))
     right = _parse_state_pick(call.data.get("right_color"))
     both = _parse_state_pick(call.data.get("color"))
 
     incantation = call.data.get("incantation")
-    if incantation is not None:
-        family = str(incantation).strip().lower()
-        if left is None:
-            left = store._ear_color(LEFT)
-        if right is None:
-            right = store._ear_color(RIGHT)
-        label = f"show {family}"
-        try:
-            await store.apply_incantation(
-                family, label=label, left=left, right=right
-            )
-        except ValueError as err:
-            raise ServiceValidationError(str(err)) from err
-        return
+    family = (
+        str(incantation).strip().lower() if incantation is not None else None
+    )
 
     effect = None
     effect_spec = call.data.get("effect")
@@ -110,7 +99,20 @@ async def _set_state_service(call: ServiceCall) -> None:
             raise ServiceValidationError(f"unknown effect: {effect_spec!r}")
         effect = (index, effect_spec)
 
-    await store.apply_state(left=left, right=right, both=both, effect=effect)
+    for store in stores:
+        if family is not None:
+            label = f"show {family}"
+            try:
+                await store.apply_incantation(
+                    family,
+                    label=label,
+                    left=left if left is not None else store._ear_color(LEFT),
+                    right=right if right is not None else store._ear_color(RIGHT),
+                )
+            except ValueError as err:
+                raise ServiceValidationError(str(err)) from err
+            continue
+        await store.apply_state(left=left, right=right, both=both, effect=effect)
 
 
 def _parse_state_pick(spec) -> tuple[str, int] | None:
@@ -431,6 +433,9 @@ class MwmEarLight(LightEntity):
             await self._store.apply_palette(code, side=self._side)
 
     async def async_turn_on(self, **kwargs) -> None:
+        _LOGGER.debug(
+            "light.turn_on %s (room=%r)", self.entity_id, self._store.room_name,
+        )
         effect = kwargs.get(ATTR_EFFECT)
         hs_color = kwargs.get(ATTR_HS_COLOR)
 
@@ -460,6 +465,9 @@ class MwmEarLight(LightEntity):
             await self._store.turn_on_side(self._side)
 
     async def async_turn_off(self, **kwargs) -> None:
+        _LOGGER.debug(
+            "light.turn_off %s (room=%r)", self.entity_id, self._store.room_name,
+        )
         if self._side == BOTH:
             await self._store.apply_simple_both(EAR_OFF_CODE)
         else:

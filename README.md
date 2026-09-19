@@ -272,6 +272,9 @@ data:
   effect: Color rotation     # room-wide program, run first so it adopts the colours
 ```
 
+Multiple rooms can be targeted at once (the target accepts any list of our
+light entities); each pair transmits the command once.
+
 Fields:
 
 - `color` — applies to both ears at once (protocol's native both form,
