@@ -1118,5 +1118,51 @@ class ApplyStateTests(unittest.TestCase):
         self.assertTrue(p.desired_on["left"] and p.desired_on["right"])
 
 
+class _FakePlayer:
+    def __init__(self, playing: bool):
+        self.playing = playing
+
+
+class EnforceShowGuardTests(unittest.TestCase):
+    """Enforcement stands down while a .msh show owns the room."""
+
+    def test_enforce_tick_stands_down_during_show(self):
+        h = HubHarness()
+        run(h.pair.apply_simple_both(0x64))
+        h.pair.set_enforce(True)
+        h.pair.show_player = _FakePlayer(True)
+        h.calls.clear()
+        run(h.pair.enforce_tick())
+        self.assertEqual(h.calls, [])
+
+    def test_enforce_reassert_stands_down_during_show(self):
+        h = HubHarness()
+        run(h.pair.apply_simple_both(0x64))
+        h.pair.set_enforce(True)
+        h.pair.show_player = _FakePlayer(True)
+        h.calls.clear()
+        run(h.pair.enforce_reassert())
+        self.assertEqual(h.calls, [])
+
+    def test_enforcement_resumes_after_show(self):
+        h = HubHarness()
+        run(h.pair.apply_simple_both(0x64))
+        h.pair.set_enforce(True)
+        h.pair.show_player = _FakePlayer(False)
+        h.calls.clear()
+        run(h.pair.enforce_tick())
+        self.assertTrue(h.calls)
+
+
+class ReplayFrameTests(unittest.TestCase):
+    def test_replay_frame_marks_sent_and_refreshes_activity(self):
+        h = Harness()
+        frame = build_frame([0x44, 0x16, 0x11])
+        run(h.pair.replay_frame(frame))
+        self.assertEqual(h.calls, [(frame.hex().upper(), 0)])
+        self.assertTrue(h.pair.matches_recent(frame.hex().upper()))
+        self.assertEqual(h.pair._last_command_at, h.now)
+
+
 if __name__ == "__main__":
     unittest.main()

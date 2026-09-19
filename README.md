@@ -299,6 +299,59 @@ Identical picks collapse to one frame, and off-ing an already dark ear is a
 no-op, so the rig is not spammed by re-bursts. This action is the intended
 entry point for later timing/sync/countdown fields.
 
+### Show replay: `mwm_ears.play_show` / `mwm_ears.stop_show`
+
+`mwm_ears.play_show` replays a `.msh` show script through the room's infrared
+emitter. Unlike the MQTT capture-rig sender in the sibling `ir-remote-tools`
+repo, this goes through Home Assistant's `infrared` entity platform, so it
+works on **any** transmitter entity — ESPHome or MQTT — not just a Tasmota
+IR topic.
+
+```yaml
+action: mwm_ears.play_show
+target:
+  entity_id: light.mwm_ears_office_ears
+data:
+  file: mwm_shows/park-cascade-demo.msh   # relative to the HA config dir
+  repeat: 1
+  reset: true
+```
+
+Any number of rooms can be targeted at once (the target accepts a list of
+our light entities); the same show then plays on every targeted room,
+validated once before any room starts so a bad script or an unavailable
+emitter starts nothing.
+
+- `file` — path to a `.msh` file. Relative paths resolve under the Home
+  Assistant config directory (`/config`); absolute paths are used as-is.
+- `script` — inline `.msh` text, as an alternative to `file`.
+- `repeat` — play count (default 1).
+- `reset` — send an all-off frame when the show finishes (default true).
+
+The parser supports the verbs the generator and sample corpus emit: `hex`
+full frames, and `cue hex` / `cascade hex` delay-led phrases (with an
+optional `members` clause). A `cue` expands to its countdown chain exactly
+as `tools/mwm-send.py` does — the `F?` bytes pre-roll by their low nibble
+× 100 ms and the immediate `20` go copy lands on the beat's `@ms` — and
+consecutive publishes are held to a 30 ms gap, dropping pre-roll members
+that cannot fit. Playback runs in the background and returns immediately;
+`mwm_ears.stop_show` cancels it, as does unloading the entry. Show frames
+are marked as ours, so their echoes do not look like a foreign wand, the
+passive assume-off rule stays quiet, and enforcement stands down until the
+show finishes — the show owns the room for its duration.
+
+If the room's emitter is unavailable, `play_show` raises a descriptive error
+instead of starting a show that could not be heard. Mid-playback, frames for
+an emitter that drops offline are skipped and logged once per outage (they
+are *not* silently thrown away). Note that healthy IR transmitters — e.g. a
+Tasmota emitter, which never publishes a state — normally rest at
+`unknown`, and that is a perfectly usable state.
+
+A new `play_show` is **rejected** while a show is already running on the
+same room: it raises an error telling you the active show's name and to call
+`mwm_ears.stop_show` first. Repeated invocations can never stack or
+silently restart a long show — each room plays at most one show at a time.
+
 ## Room-level awareness
 
 Every receiver feeds one shared hub. When it hears commands we did not
@@ -325,6 +378,7 @@ make dist    # rebuild dist/mwm_ears.zip for manual HA deploy
 |------|---------|
 | `custom_components/mwm_ears/_mwm/` | protocol library (framing, timings codec, decoder, palette) |
 | `custom_components/mwm_ears/ears.py` | pure state logic: pair desired-state, refresh/suspend rules, observed-traffic hub |
+| `custom_components/mwm_ears/show.py` | `.msh` show parser, publish scheduler, and background replay player |
 | `tests/` | unittest suite for both |
 | remaining modules | HA glue: config flow, light/sensor/switch platforms |
 

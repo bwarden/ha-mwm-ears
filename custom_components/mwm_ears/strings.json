@@ -68,6 +68,32 @@
           "description": "Catalog name or \"kind:value\" selector for the exact color to send."
         }
       }
+    },
+    "play_show": {
+      "name": "Play show file",
+      "description": "Replays a .msh show script through this room's infrared emitter, frame-by-frame on the show's own timeline. Unlike the MQTT capture-rig sender, this goes through the Home Assistant infrared entity platform, so it works on any transmitter (ESPHome or MQTT). Playback starts immediately and runs in the background; call stop_show to cancel.",
+      "fields": {
+        "file": {
+          "name": "Show file",
+          "description": "Path to the .msh file. Relative paths resolve under the Home Assistant config directory."
+        },
+        "script": {
+          "name": "Inline script",
+          "description": "Inline .msh script text, used instead of `file` for short shows."
+        },
+        "repeat": {
+          "name": "Repeat",
+          "description": "How many times to play the show."
+        },
+        "reset": {
+          "name": "End-of-show reset",
+          "description": "Send an all-off frame when the show finishes."
+        }
+      }
+    },
+    "stop_show": {
+      "name": "Stop show",
+      "description": "Stop the show currently playing in this room."
     }
   }
 }

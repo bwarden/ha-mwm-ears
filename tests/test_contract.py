@@ -100,6 +100,19 @@ class ResilientSetupContract(unittest.TestCase):
         self.assertIn("STATE_UNAVAILABLE", src)
         self.assertIn("STATE_UNKNOWN", src)
 
+    def test_entity_usable_allows_unknown_transmitter(self):
+        """Tasmota IR transmitters rest at 'unknown' (they never publish state).
+
+        Blocking unknown would silently drop every transmission from any
+        Tasmota-bound room, so _entity_usable must only gate on UNAVAILABLE.
+        """
+        src = _read("__init__.py")
+        self.assertNotRegex(
+            src,
+            r"state\.state not in \(STATE_UNAVAILABLE,\s*STATE_UNKNOWN\)",
+            "_entity_usable must not exclude unknown transmitters",
+        )
+
     def test_entity_discovered_checks_state_exists(self):
         src = _read("__init__.py")
         self.assertIn("def _entity_discovered(", src)
@@ -120,6 +133,19 @@ class ResilientSetupContract(unittest.TestCase):
     def test_transmit_guards_unavailable_emitter(self):
         src = _read("__init__.py")
         self.assertIn("_entity_usable(hass, emitter_entity)", src)
+        self.assertIn("_LOGGER.warning(", src)
+        self.assertIn('"emitter %s unavailable (%s), dropping IR transmissions"', src)
+
+    def test_play_show_rejects_unavailable_emitter(self):
+        src = _read("light.py")
+        self.assertIn("playback not started", src)
+        self.assertIn("STATE_UNAVAILABLE", src)
+
+    def test_play_show_rejects_when_already_running(self):
+        src = _read("light.py")
+        self.assertIn("player.playing", src)
+        self.assertIn("already running", src)
+        self.assertIn("stop_show first", src)
 
     def test_watchdog_skips_when_entity_unavailable(self):
         src = _read("__init__.py")
@@ -222,6 +248,38 @@ class SetStateServiceContract(unittest.TestCase):
         service = strings["services"]["set_state"]
         for field in ("color", "left_color", "right_color", "effect"):
             self.assertIn(field, service["fields"], f"strings.json lost {field!r}")
+
+
+class PlayShowServiceContract(unittest.TestCase):
+    """mwm_ears.play_show/stop_show must stay a complete documented surface."""
+
+    def _services(self) -> dict:
+        return yaml.safe_load(_read("services.yaml"))
+
+    def test_play_show_declared_with_all_fields(self):
+        svc = self._services()["play_show"]
+        self.assertIsNotNone(svc.get("target"))
+        for field in ("file", "script", "repeat", "reset"):
+            self.assertIn(field, svc.get("fields", {}), f"play_show lost {field!r}")
+
+    def test_stop_show_declared_with_target(self):
+        self.assertIsNotNone(self._services()["stop_show"].get("target"))
+
+    def test_light_platform_registers_show_services(self):
+        light = _read("light.py")
+        self.assertIn('hass.services.async_register(DOMAIN, "play_show"', light)
+        self.assertIn('hass.services.async_register(DOMAIN, "stop_show"', light)
+
+    def test_strings_declare_play_show_fields(self):
+        strings = json.loads(_read("strings.json"))
+        for field in ("file", "script", "repeat", "reset"):
+            self.assertIn(field, strings["services"]["play_show"]["fields"])
+
+    def test_player_wired_to_pair_and_cancelled_on_unload(self):
+        src = _read("__init__.py")
+        self.assertIn("ShowPlayer(pair.replay_frame)", src)
+        self.assertIn("pair.show_player = player", src)
+        self.assertIn("entry.async_on_unload(player.stop)", src)
 
 
 class EffectsSelectorContract(unittest.TestCase):

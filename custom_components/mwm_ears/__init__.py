@@ -66,6 +66,7 @@ from .ears import (
     ReceiverData,
     extract_timing_candidates,
 )
+from .show import ShowPlayer
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -125,14 +126,19 @@ async def async_migrate_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
 
 def _entity_usable(hass: HomeAssistant, entity_id: str | None) -> bool:
-    """True when a bound infrared entity exists and has a usable state."""
+    """True when a bound infrared entity exists and is not explicitly offline.
+
+    Only ``unavailable`` blocks: IR transmitters in practice rest at
+    ``unknown`` (an MQTT/Tasmota transmitter never publishes a state), so
+    treating ``unknown`` as unusable would silently drop every transmission
+    for what is a perfectly healthy device. ``None`` (not yet discovered)
+    stays unusable -- setup gates on discovery and the receiver
+    subscribe/watchdog paths handle the rest.
+    """
     if not entity_id:
         return True
     state = hass.states.get(entity_id)
-    return state is not None and state.state not in (
-        STATE_UNAVAILABLE,
-        STATE_UNKNOWN,
-    )
+    return state is not None and state.state != STATE_UNAVAILABLE
 
 
 def _entity_discovered(hass: HomeAssistant, entity_id: str | None) -> bool:
@@ -307,12 +313,27 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
     if emitter_entity:
 
+        emitter_drop_logged = False
+
         async def transmit(frame: bytes, repeat_count: int) -> None:
+            nonlocal emitter_drop_logged
             if not _entity_usable(hass, emitter_entity):
-                _LOGGER.debug(
-                    "emitter %s unavailable, dropping transmit", emitter_entity,
-                )
+                # Warn once per lapse, not per frame -- a multi-frame show
+                # would otherwise flood the log.
+                if not emitter_drop_logged:
+                    state = hass.states.get(emitter_entity)
+                    _LOGGER.warning(
+                        "emitter %s unavailable (%s), dropping IR transmissions",
+                        emitter_entity,
+                        state.state if state else "not discovered",
+                    )
+                    emitter_drop_logged = True
                 return
+            emitter_drop_logged = False
+            _LOGGER.debug(
+                "MWM send to %s via %s (repeat_count=%d)",
+                pair.room_name, emitter_entity, repeat_count,
+            )
             # repeat_count counts EXTRA spaced transmissions. The framework's
             # own back-to-back repeats don't survive cold ear receivers
             # (rig-verified); the ~1.8 s spacing ir-mwm-send used does.
@@ -333,9 +354,20 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
         pair = EarPairState(transmit)
         pair.receiver_entity = receiver_entity
+        pair.emitter_entity = emitter_entity
         pair.room_name = entry.data["name"]
         runtime["pair"] = pair
         hub.pairs.append(pair)
+
+        # .msh show replay: each frame goes out through the same mark-sent
+        # path as a user command, so our own show echoes are recognised and
+        # the partner sensor/watchdogs stay consistent.  The player lives on
+        # the pair so the play_show/stop_show services (registered by the
+        # light platform) can reach it, and is cancelled on unload.
+        player = ShowPlayer(pair.replay_frame)
+        pair.show_player = player
+        runtime["show"] = player
+        entry.async_on_unload(player.stop)
 
         def _detach() -> None:
             if pair in hub.pairs:

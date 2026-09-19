@@ -179,6 +179,9 @@ class EarPairState:
         # site (via _send_state / callers) and at every adoption site
         # (adopt_decoded).
         self._hold_frames: list[bytes] | None = None
+        # Set by the integration setup to the ShowPlayer driving this pair's
+        # .msh replays (None in pure tests, or when the pair has no emitter).
+        self.show_player = None
 
     # -- display ---------------------------------------------------------
 
@@ -318,6 +321,8 @@ class EarPairState:
         """
         if not self.enforce:
             return
+        if self.show_player is not None and self.show_player.playing:
+            return  # a .msh show owns the room until it finishes
         on = any(self.desired_on.values())
         interval = (
             ENFORCE_INTERVAL_S if on else ENFORCE_OFF_INTERVAL_S
@@ -337,6 +342,8 @@ class EarPairState:
         """
         if not self.enforce:
             return
+        if self.show_player is not None and self.show_player.playing:
+            return  # a .msh show owns the room until it finishes
         await self._send_held_state()
         self._last_reassert_at = self._clock()
 
@@ -500,6 +507,16 @@ class EarPairState:
         self._mark_sent(frame)
         self._last_command_at = self._clock()
         self._notify()
+
+    async def replay_frame(self, frame: bytes) -> None:
+        """Send one show-script frame as if it were a user command.
+
+        Marking it sent keeps our own show echoes from being mistaken for a
+        foreign wand (which would suspend repeats and adopt the frame), and
+        refreshing `_last_command_at` keeps the passive assume-off rule quiet
+        for the duration of the show.
+        """
+        await self._send(frame, 0)
 
     async def apply_simple(self, side: str, code: int) -> None:
         """Set one ear's simple color (0x60 off .. 0x67 white).

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from pathlib import Path
 
 from homeassistant.components.light import (
     ATTR_EFFECT,
@@ -12,7 +13,7 @@ from homeassistant.components.light import (
     LightEntityFeature,
 )
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.const import ATTR_ENTITY_ID
+from homeassistant.const import ATTR_ENTITY_ID, STATE_UNAVAILABLE
 from homeassistant.core import HomeAssistant, ServiceCall
 from homeassistant.exceptions import ServiceValidationError
 from homeassistant.helpers.device_registry import DeviceInfo
@@ -35,6 +36,7 @@ from .ears import (
     EarPairState,
     ObservedHub,
 )
+from .show import parse_show_script, plan_show
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -131,6 +133,111 @@ def _parse_state_pick(spec) -> tuple[str, int] | None:
         raise ServiceValidationError(str(err)) from err
 
 
+def _targeted_stores(call: ServiceCall) -> set:
+    """Resolve a service target to the distinct ear-pair stores addressed.
+
+    The three side entities of one pair share a store, so the set dedupes to
+    one entry per room; a multi-room target returns every room.
+    """
+    target = call.data.get(ATTR_ENTITY_ID)
+    ids = target if isinstance(target, (list, tuple)) else [target]
+    stores = {
+        li._store for i in ids if (li := _BY_ENTITY_ID.get(i)) is not None
+    }
+    _LOGGER.debug(
+        "service %s targets %s -> rooms: %s",
+        call.service, ids, [s.room_name for s in stores] or "none",
+    )
+    if not stores:
+        raise ServiceValidationError("no MWM Ears light entity targeted")
+    return stores
+
+
+def _resolve_show_file(hass: HomeAssistant, value: str) -> Path:
+    """Resolve a show path, relative to the HA config directory."""
+    path = Path(value).expanduser()
+    if not path.is_absolute():
+        path = Path(hass.config.config_dir) / path
+    return path
+
+
+async def _play_show_service(call: ServiceCall) -> None:
+    """Handle mwm_ears.play_show: replay a .msh show through the emitter.
+
+    The show is sent frame-by-frame on each targeted room's ``infrared``
+    emitter, so it reuses the same path as ordinary light commands and works
+    on any IR transmitter entity (MQTT or ESPHome), not just the capture
+    rig's MQTT topic. Every targeted room can be given the show at once.
+    Returns as soon as playback starts; use stop_show to cancel.
+    """
+    stores = _targeted_stores(call)
+    busy = [
+        player.name or "unnamed"
+        for s in stores
+        if (player := getattr(s, "show_player", None)) is not None
+        and player.playing
+    ]
+    if busy:
+        raise ServiceValidationError(
+            f"a show is already running on some targeted rooms"
+            f" ({', '.join(busy)}); call mwm_ears.stop_show first"
+        )
+    if any(getattr(s, "show_player", None) is None for s in stores):
+        raise ServiceValidationError("a targeted room has no infrared emitter")
+    for s in stores:
+        emitter = getattr(s, "emitter_entity", None)
+        if emitter:
+            state = call.hass.states.get(emitter)
+            if state is None or state.state == STATE_UNAVAILABLE:
+                raise ServiceValidationError(
+                    f"emitter {emitter} is unavailable"
+                    f" ({state.state if state else 'not discovered'});"
+                    " playback not started"
+                )
+
+    file_spec = call.data.get("file")
+    script = call.data.get("script")
+    if file_spec and script:
+        raise ServiceValidationError("set only one of 'file' or 'script'")
+    if file_spec:
+        path = _resolve_show_file(call.hass, str(file_spec))
+        try:
+            text = await call.hass.async_add_executor_job(path.read_text)
+        except OSError as err:
+            raise ServiceValidationError(
+                f"cannot read show file {path}: {err}"
+            ) from err
+        name = path.name
+    elif script:
+        text, name = str(script), "inline"
+    else:
+        raise ServiceValidationError("set 'file' (a .msh path) or inline 'script'")
+
+    try:
+        schedule = plan_show(
+            parse_show_script(text),
+            end_reset=bool(call.data.get("reset", True)),
+        )
+    except ValueError as err:
+        raise ServiceValidationError(f"invalid show script: {err}") from err
+
+    try:
+        repeat = max(1, int(call.data.get("repeat", 1)))
+    except (TypeError, ValueError) as err:
+        raise ServiceValidationError("'repeat' must be a positive integer") from err
+    if not schedule:
+        raise ServiceValidationError("show script schedules no frames")
+    for s in stores:
+        s.show_player.start(schedule, repeat=repeat, name=name)
+
+
+async def _stop_show_service(call: ServiceCall) -> None:
+    """Handle mwm_ears.stop_show: cancel every targeted room's show."""
+    for s in _targeted_stores(call):
+        if getattr(s, "show_player", None) is not None:
+            s.show_player.stop()
+
+
 async def async_setup_entry(
     hass: HomeAssistant,
     entry: ConfigEntry,
@@ -147,6 +254,8 @@ async def async_setup_entry(
     if not _services_registered:
         hass.services.async_register(DOMAIN, "select_color", _select_color_service)
         hass.services.async_register(DOMAIN, "set_state", _set_state_service)
+        hass.services.async_register(DOMAIN, "play_show", _play_show_service)
+        hass.services.async_register(DOMAIN, "stop_show", _stop_show_service)
         _services_registered = True
 
     async_add_entities(
@@ -205,13 +314,25 @@ class MwmEarLight(LightEntity):
     async def async_added_to_hass(self) -> None:
         self._store.listeners.append(self.async_write_ha_state)
         self._hub.listeners.append(self.async_write_ha_state)
+        player = getattr(self._store, "show_player", None)
+        if player is not None:
+            player.listeners.append(self.async_write_ha_state)
         _BY_ENTITY_ID[self.entity_id] = self
+        _LOGGER.debug(
+            "registered light %s (room=%r, side=%s, emitter=%r)",
+            self.entity_id, self._store.room_name, self._side,
+            self._store.emitter_entity,
+        )
 
     async def async_will_remove_from_hass(self) -> None:
         _BY_ENTITY_ID.pop(self.entity_id, None)
-        for listeners in (self._store.listeners, self._hub.listeners):
+        listeners = [self._store.listeners, self._hub.listeners]
+        player = getattr(self._store, "show_player", None)
+        if player is not None:
+            listeners.append(player.listeners)
+        for group in listeners:
             try:
-                listeners.remove(self.async_write_ha_state)
+                group.remove(self.async_write_ha_state)
             except ValueError:
                 pass
 
@@ -262,6 +383,15 @@ class MwmEarLight(LightEntity):
         return {
             "side": self._side,
             "running_effect": self._store.running_effect,
+            "show_playing": bool(
+                getattr(self._store, "show_player", None)
+                and self._store.show_player.playing
+            ),
+            "show_name": (
+                getattr(self._store, "show_player", None).name
+                if getattr(self._store, "show_player", None)
+                else None
+            ),
             "color_identity": self.color_identity,
             "palette_code": dict(self._store.palette_code),
             "suspended_by": self._store.suspended_by,
