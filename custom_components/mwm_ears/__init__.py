@@ -529,7 +529,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             registry = er.async_get(hass)
             for eid, reg_entry in registry.entities.items():
                 if reg_entry.platform == DOMAIN:
-                    registry.async_update(eid, labels={"mwm"})
+                    registry.async_update_entity(eid, labels={"mwm"})
 
         async_call_later(hass, 5, _apply_labels)
 
