@@ -98,7 +98,14 @@ class MwmPhraseSensor(_ReceiverSensor):
 
     @property
     def native_value(self) -> str | None:
-        return self._receiver.last_phrase_hex
+        phrase = self._receiver.last_phrase_hex
+        # Home Assistant drops any state over 255 chars to unknown; long
+        # non-bundle captures (a transmitter blasting a phrase in one
+        # signal) must not blank the sensor.  The full record stays in the
+        # all_frames attribute.
+        if phrase is not None and len(phrase) > 255:
+            return phrase[:252] + "..."
+        return phrase
 
     @property
     def extra_state_attributes(self) -> dict:

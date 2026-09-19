@@ -114,7 +114,10 @@ box, which the form suggests together; either half is optional:
   (end-bit-swallowed bytes recovered by CRC brute-force) into diagnostic
   sensors:
   - *last phrase*: message A of the most recent capture (the whole capture
-    when it wasn't a bundle), with our decoded interpretation,
+    when it wasn't a bundle), with our decoded interpretation; the state is
+    truncated to Home Assistant's 255-character cap when a single non-bundle
+    capture carries many repeated frames (the full capture is always on the
+    `all_frames` attribute),
   - *last companion*: message B of an A-B-A' bundle -- effect/cycle/clock
     parameters; state is `none` unless the last capture was a bundle. A'
     duplicates A and is not reported separately,
