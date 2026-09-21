@@ -1050,6 +1050,14 @@ class ObservedHub:
         if not valid:
             return
         bundle = describe_bundle(valid)
+        # Bundling law (mirror of the MwmProtocol.unbundle capability in
+        # web/src/lib/protocol/mwm.ts): a capture's A+B+A' is ONE command, and
+        # this component is frame-level -- decode_timings has already split the
+        # incoming timing stream into every frame, so describe_bundle/valid[0]
+        # collapses the triplet the same way unbundle's first-frame law does.
+        # The value-level ``unbundle`` primitive ships in _mwm for consumers
+        # that ingest a whole structured Data hex instead; no such path exists
+        # here by design.
         command_frames = [valid[0]] if bundle else valid
         changed = False
         # Enforcing pairs that heard an authoritative (non-echo) signal and
