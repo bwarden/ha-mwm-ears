@@ -4,6 +4,20 @@ All notable changes to the mwm_ears Home Assistant integration.
 Releases are tagged `v<version>`; version numbers live in
 `manifest.json` and `const.py` in lockstep.
 
+## [0.8.1] - 2026-09-20
+
+### Vendored library
+
+- **`unbundle` capability** — the vendored `_mwm` library ships
+  `mwm.protocol.unbundle`, the byte-identical port of the TS
+  `MwmProtocol.unbundle` capability: it splits a whole A+B+A' capture
+  (Tasmota / IRremoteESP8266 commit 247bcdb3 logs it as one Data value)
+  into its own frames via each frame's self-declared length nibble.
+  `ObservedHub.ingest` already collapses a frame-level A+B+A' capture to
+  its phrase; that triplet-unwrap is now documented as mirroring the
+  capability's first-frame law, and the value-level raw path is noted as
+  intentionally absent.
+
 ## [0.8.0] - 2026-09-18
 
 ### Added
