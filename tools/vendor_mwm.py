@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Vendor the MWM protocol library from ir-remote-tools into the integration.
+"""Vendor the MWM protocol library from python-mwm into the integration.
 
 PURPOSE
 -------
@@ -7,7 +7,7 @@ ha-mwm-ears is a standalone Home Assistant custom integration: it ships a
 private copy of the ``mwm`` protocol library under
 ``custom_components/mwm_ears/_mwm/`` so the component is self-contained with
 no pip dependency.  The authoritative source for that library lives in the
-sibling ``ir-remote-tools`` repo (``python/mwm/``).
+sibling ``python-mwm`` repo (``python/mwm/``).
 
 ``make vendor`` (this script) copies the latest library into ``_mwm/`` and
 regenerates the effect options in ``services.yaml`` from the vendored
@@ -16,8 +16,8 @@ logic and never hand-re-derives the effect list.
 
 USAGE
 -----
-    python3 tools/vendor_mwm.py            # default: ../ir-remote-tools
-    MWM_SRC=/path/to/ir-remote-tools/python/mwm python3 tools/vendor_mwm.py
+    python3 tools/vendor_mwm.py            # default: ../python-mwm
+    MWM_SRC=/path/to/python-mwm/python/mwm python3 tools/vendor_mwm.py
 
 The verbatim copies are intentionally byte-identical to source: the library
 is the single source of truth, and any per-repo comment drift is dropped in
@@ -55,7 +55,7 @@ _SERVICES_MARKER = "# MWM-EFFECT-OPTIONS"
 def source_dir() -> pathlib.Path:
     """Resolve the authoritative library directory."""
     override = _REPO_ROOT.parent
-    return override / "ir-remote-tools" / "python" / "mwm"
+    return override / "python-mwm" / "python" / "mwm"
 
 
 def vendor(src: pathlib.Path) -> list[pathlib.Path]:
@@ -63,8 +63,8 @@ def vendor(src: pathlib.Path) -> list[pathlib.Path]:
     if not src.is_dir():
         sys.exit(
             f"error: source library not found at {src}\n"
-            "  pass MWM_SRC=/path/to/ir-remote-tools/python/mwm or run from "
-            "a checkout whose sibling is ir-remote-tools"
+            "  pass MWM_SRC=/path/to/python-mwm/python/mwm or run from "
+            "a checkout whose sibling is python-mwm"
         )
     _VENDOR_DIR.mkdir(parents=True, exist_ok=True)
     copied = []

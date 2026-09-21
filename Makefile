@@ -8,20 +8,33 @@
 
 PYTHON ?= python3
 
+# The MWM protocol library is re-vendored from the sibling python-mwm repo
+# on every build, so tests and dist always exercise the latest library.
+# Override with MWM_SRC=/path/to/python-mwm/python/mwm.  In a checkout
+# without the sibling (CI), the committed _mwm/ copy is used as-is.
+MWM_SRC ?= ../python-mwm/python/mwm
+
 .PHONY: build test dist vendor clean
 
-# Syntax-check every module in the component (incl. the HA platform files,
+# Pull the latest MWM protocol library from the sibling python-mwm repo
+# into _mwm/ (when available) and regenerate services.yaml from it, then
+# syntax-check every module in the component (incl. the HA platform files,
 # which aren't importable here but must still compile).
 build:
+	@if [ -d "$(MWM_SRC)" ]; then \
+		echo "vendoring MWM library from $(MWM_SRC)"; \
+		MWM_SRC="$(MWM_SRC)" $(PYTHON) tools/vendor_mwm.py; \
+	else \
+		echo "MWM_SRC $(MWM_SRC) not present; using committed _mwm"; \
+	fi
 	PYTHONPATH=custom_components $(PYTHON) -m compileall -q custom_components
 
-# Pull the latest MWM protocol library from the sibling ir-remote-tools repo
-# into custom_components/mwm_ears/_mwm/ and regenerate the effect options in
-# services.yaml from it.  Run this before making a release; commit the result
-# so the vendored lib and generated services.yaml ship as a reviewed unit.
-# Override the source with MWM_SRC=/path/to/python/mwm.
+# Re-vendor the MWM library + regenerate services.yaml (build already does
+# this; the target exists for explicit/cron use and for CI-style checkouts
+# that lack the sibling).  Override the source with
+# MWM_SRC=/path/to/python-mwm/python/mwm.
 vendor:
-	$(PYTHON) tools/vendor_mwm.py
+	MWM_SRC="$(MWM_SRC)" $(PYTHON) tools/vendor_mwm.py
 
 # The vendored protocol library and pair-state logic are unit-tested from
 # tests/; the platform (HA-coupled) modules get their compileall above.
