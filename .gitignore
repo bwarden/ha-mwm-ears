@@ -5,3 +5,5 @@ __pycache__/
 .DS_Store
 # python-mwm clone used by `make vendor` (see tools/vendor_mwm.py)
 .mwm/
+# rig probe output (not part of the integration)
+incant_probe_*.json
