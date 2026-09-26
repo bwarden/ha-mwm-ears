@@ -16,9 +16,11 @@ itself.
 
 The component is self-contained: the MWM protocol library is vendored
 under `custom_components/mwm_ears/_mwm/` (framing, CRC-8/Dallas,
-palette tables, phrase decoder, timing codec). The only external
-requirement is `infrared-protocols`, pulled in via the manifest for the
-framework's `Command` envelope type; MWM support itself lives here.
+palette tables, phrase decoder, timing codec) from the published
+[`python-mwm`](https://github.com/bwarden/python-mwm) repository, pinned to
+that repo's release tag. The only external requirement is
+`infrared-protocols`, pulled in via the manifest for the framework's
+`Command` envelope type; MWM support itself lives here.
 
 ## Install via HACS
 
@@ -58,7 +60,8 @@ box, which the form suggests together; either half is optional:
     using hue-dominant matching (hue drift is penalised far more than
     brightness drift, so dark/muted requests stay in family instead of
     leaping to a bright neighbour), then transmits ONLY verified corpus
-    frames (samples/mwm-gwts-colors.tsv;
+    frames (the verified corpus in python-mwm's
+    [`samples/mwm-gwts-colors.tsv`](https://github.com/bwarden/python-mwm/blob/main/samples/mwm-gwts-colors.tsv);
     rig session 2026-08-23 confirmed multi-byte phrases are sequential
     opcode scripts -- last opcode wins on both ears -- so no per-side
     fused phrases are ever invented):
@@ -298,8 +301,10 @@ Fields:
   it instead darkens both ears via `apply_off`). `pulse` reads a palette
   shade from `left_color` and the simple colour from `right_color`/`color`;
   the other effect incantations default to the current colours. See
-  `docs/mwm-show-protocol.md` §13 for the source frames each derives from
-  and `_mwm/incant.py` for the builders.
+  python-mwm's
+  [`docs/mwm-show-protocol.md`](https://github.com/bwarden/python-mwm/blob/main/docs/mwm-show-protocol.md)
+  §13 for the source frames each derives from and `_mwm/incant.py` for
+  the builders.
 
 Identical picks collapse to one frame, and off-ing an already dark ear is a
 no-op, so the rig is not spammed by re-bursts. This action is the intended
@@ -308,10 +313,9 @@ entry point for later timing/sync/countdown fields.
 ### Show replay: `mwm_ears.play_show` / `mwm_ears.stop_show`
 
 `mwm_ears.play_show` replays a `.msh` show script through the room's infrared
-emitter. Unlike the MQTT capture-rig sender in the sibling `ir-remote-tools`
-repo, this goes through Home Assistant's `infrared` entity platform, so it
-works on **any** transmitter entity — ESPHome or MQTT — not just a Tasmota
-IR topic.
+emitter. Unlike the maintainer's MQTT capture-rig sender, this goes
+through Home Assistant's `infrared` entity platform, so it works on **any**
+transmitter entity — ESPHome or MQTT — not just a Tasmota IR topic.
 
 ```yaml
 action: mwm_ears.play_show
@@ -394,32 +398,41 @@ everything testable without homeassistant installed.
 
 ### Releases & versioning
 
-The integration embeds the MWM protocol library from the sibling
-`ir-remote-tools` repo under `custom_components/mwm_ears/_mwm/`. **Before
-tagging a release, pull the latest library in and verify it:**
+The integration embeds the MWM protocol library from the published
+[`python-mwm`](https://github.com/bwarden/python-mwm) repository under
+`custom_components/mwm_ears/_mwm/`, pinned to that repo's release tag (the
+tag is python-mwm's documented contract for vendored consumers). **Before
+tagging a release, pull the pinned library in and verify it:**
 
 ```
-make vendor   # copy the latest python/mwm into _mwm/ + regenerate
-              # services.yaml effect options (MWM_SRC=... to override source)
+make vendor   # clone python-mwm at the pinned tag (tools/vendor_mwm.py's
+              # _MWM_TAG) into a gitignored .mwm/ cache, copy python/mwm
+              # into _mwm/, and regenerate the services.yaml effect options
+              # (MWM_SRC=... to vendor from a local checkout instead)
 make test     # run the full suite against the freshly vendored library
 ```
+
+To move to a newer library release, edit `_MWM_TAG` in
+`tools/vendor_mwm.py`, then run `make vendor` + `make test`.
 
 `make vendor` copies each library module byte-for-byte (the library is the
 single source of truth for framing, palette, effects, and the effect
 companion) and rewrites the effect `options:` list in `services.yaml` from
 the vendored catalogue, so the effect selector and the library never drift.
-Commit the vendored bump + regenerated `services.yaml` as a reviewed unit,
-then proceed as before:
+A contract test fails if the committed `_mwm/` copy is not the release the
+pin names. Commit the vendored bump + regenerated `services.yaml` as a
+reviewed unit, then proceed as before:
 
-HACS pulls the version from the latest git tag (prefixed `v`, e.g.
-`v0.7.7`). A release: run `make vendor` + `make test`, commit the vendored
-library, tag `v<version>`, push the tag; the `Release` workflow validates
-the tag matches both `manifest.json`'s `version` and `const.py`'s
-`INTEGRATION_VERSION`, runs `make test`, builds `dist/mwm_ears.zip`, and
-attaches it to the release. The CI validates the committed vendored state
-(it cannot reach the sibling `ir-remote-tools` repo); the pull-in happens
-locally via `make vendor`. Bumping a version for a card-visible change is
-required so the registered card URL
+HACS takes the version from the latest GitHub *release* (tag prefixed `v`,
+e.g. `v0.8.2`) -- a bare tag is not enough. A release: run `make vendor` +
+`make test`, commit the vendored library, tag `v<version>`, push the tag;
+the `Release` workflow validates the tag matches both `manifest.json`'s
+`version` and `const.py`'s `INTEGRATION_VERSION`, runs `make test`, builds
+`dist/mwm_ears.zip`, and attaches it to the release -- so let that workflow
+finish before telling users to update. CI validates the committed vendored
+state (it has no `.mwm/` cache and never reaches the network); the pull-in
+happens locally via `make vendor`. Bumping a version for a card-visible
+change is required so the registered card URL
 (`/custom_components/mwm_ears/frontend/mwm-ears-card.js?v=<version>`)
 cache-busts and the frontend picks up the new card.
 
@@ -427,12 +440,12 @@ cache-busts and the frontend picks up the new card.
 
 This repo is the self-contained Home Assistant integration. The interactive
 **rig research tools** (which drive and analyse real ears directly over MQTT
-with no Home Assistant) live in the sibling `ir-remote-tools` monorepo under
-its `tools/` directory — see that repo's README (`./tools/` and `docs/`) for
-the senders, beacon capture/analysis, color-cycle testing, and offline log
-decoding, plus the shared `_bootstrap.py` / `_mqtt.py` helpers. They share
-the same `_mwm` protocol library vendored here under
-`custom_components/mwm_ears/_mwm/`.
+with no Home Assistant) live in a separate `ir-remote-tools` monorepo that
+is not published: they are the maintainer's own hardware-rig harness, not
+part of the install. They share the same `mwm` protocol library vendored
+here under `custom_components/mwm_ears/_mwm/`. The public protocol reference
+and capture corpus are in
+[python-mwm](https://github.com/bwarden/python-mwm) (`docs/`, `samples/`).
 
 ### color cycle test (`tools/color_cycle.py`)
 
@@ -448,8 +461,6 @@ equivalent) and attempts to **decipher every observed command** — full
 decoding where possible, or a note that the command could not be fully
 decoded.
 
-**Run both from the sibling `ir-remote-tools` repo**, where they live at
-`tools/` alongside the shared `_mqtt.py` / `_bootstrap.py` helpers; the
-flag tables and usage are documented in that repo's README and
-`docs/`. They share the same `mwm` protocol library vendored here under
-`custom_components/mwm_ears/_mwm/`.
+**Run both from the `ir-remote-tools` repo**, where they live at `tools/`
+alongside the shared `_mqtt.py` / `_bootstrap.py` helpers; the flag tables
+and usage are documented in that repo's README and `docs/`.
