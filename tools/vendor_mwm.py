@@ -6,34 +6,50 @@ PURPOSE
 ha-mwm-ears is a standalone Home Assistant custom integration: it ships a
 private copy of the ``mwm`` protocol library under
 ``custom_components/mwm_ears/_mwm/`` so the component is self-contained with
-no pip dependency.  The authoritative source for that library lives in the
-sibling ``python-mwm`` repo (``python/mwm/``).
+no pip dependency.  The authoritative source is the published
+``python-mwm`` repository, pinned here by release tag: python-mwm publishes
+the tag as the contract for vendored consumers, so ``_MWM_TAG`` is the pin
+and ``_MWM_REPO`` is the only place a URL belongs.
 
-``make vendor`` (this script) copies the latest library into ``_mwm/`` and
-regenerates the effect options in ``services.yaml`` from the vendored
-catalogue, so the released integration always embeds the newest protocol
-logic and never hand-re-derives the effect list.
+``make vendor`` (this script) shallow-clones that tag into a gitignored
+cache (``.mwm/``), copies the library into ``_mwm/``, and regenerates the
+effect options in ``services.yaml`` from the vendored catalogue, so the
+released integration always embeds the pinned protocol logic and never
+hand-re-derives the effect list.  ``make build``/``make test`` only vendor
+when the cache already exists or MWM_SRC is given, so a fresh checkout --
+and CI -- tests the committed copy without touching the network.
 
 USAGE
 -----
-    python3 tools/vendor_mwm.py            # default: ../python-mwm
+    python3 tools/vendor_mwm.py            # clone the pinned tag, then vendor
     MWM_SRC=/path/to/python-mwm/python/mwm python3 tools/vendor_mwm.py
 
 The verbatim copies are intentionally byte-identical to source: the library
 is the single source of truth, and any per-repo comment drift is dropped in
 favour of clean reproduction.
 
-Exit 0 on success; nonzero if the source can't be found or a file differs in
-an unexpected way.
+Exit 0 on success; nonzero if the source can't be fetched or a file differs
+in an unexpected way.
 """
 
 from __future__ import annotations
 
 import os
 import pathlib
+import shutil
+import subprocess
 import sys
 
 _REPO_ROOT = pathlib.Path(__file__).resolve().parents[1]
+
+# The vendored library's pin.  Bumping this is the whole "pull a new library
+# release" ritual: edit the tag, run `make vendor`, commit the result.
+_MWM_REPO = "https://github.com/bwarden/python-mwm"
+_MWM_TAG = "v0.3.0"
+
+# Shallow clone of _MWM_REPO at _MWM_TAG; gitignored.  The Makefile's
+# MWM_CACHE default must match this path.
+_CACHE = _REPO_ROOT / ".mwm" / "python-mwm"
 
 _LIB_MODULES = [
     "__init__.py",
@@ -52,10 +68,41 @@ _SERVICES_YAML = _REPO_ROOT / "custom_components" / "mwm_ears" / "services.yaml"
 _SERVICES_MARKER = "# MWM-EFFECT-OPTIONS"
 
 
-def source_dir() -> pathlib.Path:
-    """Resolve the authoritative library directory."""
-    override = _REPO_ROOT.parent
-    return override / "python-mwm" / "python" / "mwm"
+def _checked_out_tag(repo: pathlib.Path) -> str:
+    """The tag the cached clone is sitting on ('' if it can't be read)."""
+    proc = subprocess.run(
+        ["git", "-C", str(repo), "describe", "--tags", "--exact-match"],
+        capture_output=True, text=True, check=False,
+    )
+    return proc.stdout.strip()
+
+
+def clone() -> pathlib.Path:
+    """Return the library dir from a shallow clone of the pinned tag."""
+    src = _CACHE / "python" / "mwm"
+    if src.is_dir() and _checked_out_tag(_CACHE) == _MWM_TAG:
+        return src
+    # A cache left over from an older pin would silently vendor the wrong
+    # library, so it is replaced rather than reused.
+    shutil.rmtree(_CACHE, ignore_errors=True)
+    print(f"cloning {_MWM_REPO} at {_MWM_TAG}")
+    subprocess.run(
+        ["git", "-c", "advice.detachedHead=false", "clone", "--quiet",
+         "--depth", "1", "--branch", _MWM_TAG, _MWM_REPO, str(_CACHE)],
+        check=True,
+    )
+    return src
+
+
+def resolve_source() -> pathlib.Path:
+    """The MWM_SRC override when it exists, else the published pin."""
+    override = os.environ.get("MWM_SRC")
+    if override:
+        src = pathlib.Path(override)
+        if src.is_dir():
+            return src
+        print(f"MWM_SRC {src} not found; using {_MWM_REPO}@{_MWM_TAG}")
+    return clone()
 
 
 def vendor(src: pathlib.Path) -> list[pathlib.Path]:
@@ -63,8 +110,8 @@ def vendor(src: pathlib.Path) -> list[pathlib.Path]:
     if not src.is_dir():
         sys.exit(
             f"error: source library not found at {src}\n"
-            "  pass MWM_SRC=/path/to/python-mwm/python/mwm or run from "
-            "a checkout whose sibling is python-mwm"
+            f"  pass MWM_SRC=/path/to/python-mwm/python/mwm, or make the "
+            f"{_MWM_REPO} clone at {_MWM_TAG} reachable"
         )
     _VENDOR_DIR.mkdir(parents=True, exist_ok=True)
     copied = []
@@ -107,7 +154,7 @@ def regenerate_services_yaml(names: list[str]) -> None:
 
 
 def main() -> None:
-    src = pathlib.Path(os.environ.get("MWM_SRC", str(source_dir())))
+    src = resolve_source()
     copied = vendor(src)
     print(f"vendored {len(copied)} modules from {src}")
     names = effect_names()

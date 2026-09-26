@@ -8,31 +8,33 @@
 
 PYTHON ?= python3
 
-# The MWM protocol library is re-vendored from the sibling python-mwm repo
-# on every build, so tests and dist always exercise the latest library.
-# Override with MWM_SRC=/path/to/python-mwm/python/mwm.  In a checkout
-# without the sibling (CI), the committed _mwm/ copy is used as-is.
-MWM_SRC ?= ../python-mwm/python/mwm
+# The MWM protocol library is vendored from the published python-mwm repo,
+# pinned to the release tag recorded in tools/vendor_mwm.py (_MWM_TAG).
+# `make vendor` shallow-clones that tag into MWM_CACHE (gitignored) and
+# re-vendors on every build afterwards; a fresh checkout -- and CI -- has no
+# cache, so it tests the committed _mwm/ copy without touching the network.
+# Override with MWM_SRC=/path/to/python-mwm/python/mwm to vendor from a
+# local checkout instead.
+MWM_CACHE ?= .mwm/python-mwm
+MWM_SRC ?=
 
 .PHONY: build test dist vendor clean
 
-# Pull the latest MWM protocol library from the sibling python-mwm repo
-# into _mwm/ (when available) and regenerate services.yaml from it, then
-# syntax-check every module in the component (incl. the HA platform files,
-# which aren't importable here but must still compile).
+# Re-vendor the MWM protocol library from the pinned tag (when a source is
+# available) and regenerate services.yaml from it, then syntax-check every
+# module in the component (incl. the HA platform files, which aren't
+# importable here but must still compile).
 build:
-	@if [ -d "$(MWM_SRC)" ]; then \
-		echo "vendoring MWM library from $(MWM_SRC)"; \
+	@if [ -n "$(MWM_SRC)" ] || [ -d "$(MWM_CACHE)" ]; then \
+		echo "vendoring MWM library"; \
 		MWM_SRC="$(MWM_SRC)" $(PYTHON) tools/vendor_mwm.py; \
 	else \
-		echo "MWM_SRC $(MWM_SRC) not present; using committed _mwm"; \
+		echo "no MWM source (run 'make vendor' to pull $(MWM_CACHE)); using committed _mwm"; \
 	fi
 	PYTHONPATH=custom_components $(PYTHON) -m compileall -q custom_components
 
-# Re-vendor the MWM library + regenerate services.yaml (build already does
-# this; the target exists for explicit/cron use and for CI-style checkouts
-# that lack the sibling).  Override the source with
-# MWM_SRC=/path/to/python-mwm/python/mwm.
+# Pull the pinned MWM protocol library release into _mwm/ (cloning the
+# published python-mwm tag if needed) and regenerate services.yaml from it.
 vendor:
 	MWM_SRC="$(MWM_SRC)" $(PYTHON) tools/vendor_mwm.py
 
