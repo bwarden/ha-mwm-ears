@@ -1,4 +1,4 @@
-"""The IR Remote Tools integration.
+"""The MWM Ears integration.
 
 A consumer of the Home Assistant infrared entity platform (2026.4+).
 

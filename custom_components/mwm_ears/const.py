@@ -1,4 +1,4 @@
-"""Constants for the IR Remote Tools integration."""
+"""Constants for the MWM Ears integration."""
 
 DOMAIN = "mwm_ears"
 
