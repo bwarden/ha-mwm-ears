@@ -4,6 +4,37 @@ All notable changes to the mwm_ears Home Assistant integration.
 Releases are tagged `v<version>`; version numbers live in
 `manifest.json` and `const.py` in lockstep.
 
+## [0.8.3] - 2026-09-26
+
+### Setup
+
+- **Declared the `http` and `lovelace` dependencies** — both are used
+  during `async_setup_entry` (the card's static path is registered through
+  `hass.http`, then the Lovelace resource collections are read and written),
+  but neither was in `dependencies`. Hassfest caught it on the first public
+  run of the Validate workflow:
+
+      [ERROR] [DEPENDENCIES] Using component http but it's not in 'dependencies' or 'after_dependencies'
+      [ERROR] [DEPENDENCIES] Using component lovelace but it's not in 'dependencies' or 'after_dependencies'
+
+  In practice, when Lovelace was not set up yet, the card registration hit
+  the "Lovelace not loaded yet" branch in `__init__.py` and was deferred to
+  a later setup -- so an install could come up with no dashboard card until
+  something forced a reload. `dependencies` (not `after_dependencies`) is the
+  correct list here: both touches happen during our own setup, so they must
+  be set up *before* us. The defensive `try`/`except` and the deferral
+  branch stay, since they still cover YAML resource mode and a failed
+  static-path registration.
+- **Dropped the dead `homeassistant` key from the manifest** — hassfest
+  rejected the whole manifest on it:
+
+      [ERROR] [MANIFEST] Invalid manifest: not a valid option, did you mean 'homekit'? at 'homeassistant'. Got '2026.4.0'
+
+  It is not a key in HA's integration manifest schema and the runtime loader
+  ignores it entirely. The minimum-version statement is unchanged in
+  substance: it lives in `hacs.json`'s `homeassistant`, which HACS does
+  enforce against the running instance.
+
 ## [0.8.2] - 2026-09-25
 
 ### Vendored library
