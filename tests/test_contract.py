@@ -22,6 +22,7 @@ _COMPONENT = (
     pathlib.Path(__file__).resolve().parents[1]
     / "custom_components" / "mwm_ears"
 )
+_REPO_ROOT = pathlib.Path(__file__).resolve().parents[1]
 
 
 def _read(name: str) -> str:
@@ -209,6 +210,30 @@ class VersionContract(unittest.TestCase):
         )
         self.assertIsNotNone(match, "const.py lost INTEGRATION_VERSION")
         self.assertEqual(manifest.get("version"), match.group(1))
+
+
+class VendoredLibraryContract(unittest.TestCase):
+    """The committed _mwm/ copy must be the pinned python-mwm release.
+
+    `make vendor` records what it pulled in only as the library's own
+    __version__, so a pull that half-happened (or a pin bumped without
+    re-vendoring) would otherwise ship silently -- which is how _mwm/ sat at
+    0.1.0 while the library was at 0.3.0.
+    """
+
+    def test_vendored_version_matches_pinned_tag(self):
+        import mwm
+
+        tag = re.search(
+            r'^_MWM_TAG = "([^"]+)"',
+            (_REPO_ROOT / "tools" / "vendor_mwm.py").read_text(), re.M,
+        )
+        self.assertIsNotNone(tag, "tools/vendor_mwm.py lost the _MWM_TAG pin")
+        self.assertEqual(
+            mwm.__version__, tag.group(1).lstrip("v"),
+            "vendored _mwm/ is not the pinned python-mwm release; "
+            "run `make vendor`",
+        )
 
 
 class SetStateServiceContract(unittest.TestCase):
