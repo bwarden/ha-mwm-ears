@@ -4,6 +4,29 @@ All notable changes to the mwm_ears Home Assistant integration.
 Releases are tagged `v<version>`; version numbers live in
 `manifest.json` and `const.py` in lockstep.
 
+## [0.8.2] - 2026-09-25
+
+### Vendored library
+
+- **Re-vendored from the published `python-mwm` release** — `_mwm/` now
+  carries python-mwm `v0.3.0`, the published tag that the library's own
+  docs define as the pin for vendored consumers. Only the version stamp
+  moved: the six protocol modules were already byte-identical to `v0.3.0`,
+  so there is no protocol behaviour change in this release. `_mwm/\_\_init\_\_.py`
+  had been left stamped `0.1.0` while its modules already held `0.3.0`
+  content, so nothing in the integration could say which release it was
+  built from.
+- **Vendoring pins the tag, not a sibling checkout** — `make vendor`
+  shallow-clones `github.com/bwarden/python-mwm` at the tag recorded in
+  `tools/vendor_mwm.py` (`_MWM_TAG`) into a gitignored `.mwm/` cache, so a
+  release is reproducible from the published repo alone. `make build` and
+  `make test` vendor only when that cache (or an `MWM_SRC` override) already
+  exists, so a fresh checkout and CI test the committed copy without
+  network access. A cache left on a stale tag is replaced, not reused.
+- **New contract test** — `VendoredLibraryContract` fails when the committed
+  `_mwm/` copy is not the release the pin names, so a half-landed pull
+  cannot ship again.
+
 ## [0.8.1] - 2026-09-20
 
 ### Vendored library
