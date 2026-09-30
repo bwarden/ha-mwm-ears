@@ -362,6 +362,34 @@ same room: it raises an error telling you the active show's name and to call
 `mwm_ears.stop_show` first. Repeated invocations can never stack or
 silently restart a long show — each room plays at most one show at a time.
 
+### Known issue: Tuya-firmware S18 IR blasters compress the bit clock
+
+An S18-style IR blaster running **Tuya's stock firmware** (Tuya Local)
+emits the MWM grid with the whole **bit clock ~8 % fast** (effective baud
+≈2600 vs 2400): marks stay near-true but every space is shortened by a
+fixed ~88 µs, so the mark+space period per bit falls short of 2×417 µs
+(measured 2026-09 against a Tasmota TX through the same receivers: 1-tick
+spaces 330 µs vs the nominal 417 µs, all longer spaces equally clipped).
+
+Tolerant decoders like IRremoteESP8266 (Tasmota; ±150 µs/tick) still decode
+these frames as valid MWM, which is why such a signal "looks fine" to a
+Tasmota receiver yet real ears do not respond reliably: their tick clock is
+strict and the short spaces walk the sampling point out of the bit window.
+
+**Firmware-specific, not hardware:** the identical S18 hardware reflashed
+with ESPHome/LibreTiny emits a correct bit clock (measured 2402 baud,
+per-bit period 99.9 %). Its mark/space split is symmetric-shifted
+(~±100 µs: marks 124 %, spaces 76 % of nominal) but the bit period itself
+is exact, so the ears decode it. A Tasmota IR blaster is likewise exact
+(mark and space both within ±7 %).
+
+The Tuya-firmware compression is a fixed offset, so it is in principle
+compensable by pre-stretching spaces before sending, but the compensation
+has **not been implemented or verified** — this remains an unsolved
+limitation. Mitigation today: for a room with a Tuya-firmware S18, bind the
+emitter to a transmitter verified to reproduce the 417 µs grid accurately
+(a Tasmota IR blaster, or the same S18 hardware flashed with ESPHome).
+
 ## Room-level awareness
 
 Every receiver feeds one shared hub. When it hears commands we did not
