@@ -33,10 +33,27 @@ jobs:
       - name: "Build distribution zip"
         run: make dist
 
+      - name: "Extract CHANGELOG entry for the release body"
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          python3 - "$VERSION" <<'PY' > release-notes.md
+          import re, sys
+          version = sys.argv[1]
+          text = open("CHANGELOG.md").read()
+          m = re.search(
+              r"^## \[" + re.escape(version) + r"\].*?(?=^## \[|\Z)",
+              text, re.M | re.S,
+          )
+          if not m:
+              sys.exit(f"no CHANGELOG entry for {version}")
+          print(m.group(0).strip())
+          PY
+          cat release-notes.md
+
       - name: "Upload release"
         uses: "softprops/action-gh-release@v3"
         with:
           tag_name: "${{ github.ref_name }}"
-          generate_release_notes: true
+          body_path: release-notes.md
           files: |
             dist/mwm_ears.zip
