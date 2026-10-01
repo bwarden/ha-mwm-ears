@@ -4,7 +4,7 @@ DOMAIN = "mwm_ears"
 
 # Single source of truth for the integration version. manifest.json must
 # carry the same value; tests/test_contract.py enforces the sync.
-INTEGRATION_VERSION = "0.8.3"
+INTEGRATION_VERSION = "0.8.4"
 
 CONF_EMITTER_ENTITY = "emitter_entity"
 CONF_RECEIVER_ENTITY = "receiver_entity"

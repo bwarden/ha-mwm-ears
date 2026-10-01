@@ -383,12 +383,18 @@ per-bit period 99.9 %). Its mark/space split is symmetric-shifted
 is exact, so the ears decode it. A Tasmota IR blaster is likewise exact
 (mark and space both within ±7 %).
 
-The Tuya-firmware compression is a fixed offset, so it is in principle
-compensable by pre-stretching spaces before sending, but the compensation
-has **not been implemented or verified** — this remains an unsolved
-limitation. Mitigation today: for a room with a Tuya-firmware S18, bind the
-emitter to a transmitter verified to reproduce the 417 µs grid accurately
-(a Tasmota IR blaster, or the same S18 hardware flashed with ESPHome).
+The Tuya-firmware compression is a fixed offset, so it is compensated by
+pre-stretching every space by 88 µs before sending. The compensation is
+keyed to the emitter's firmware identity — the entity must be exposed by the
+`tuya_local` integration *and* its config entry must select the
+`basic_ir_remote` driver (the S18 family). The identical board reflashed with
+ESPHome/LibreTiny is exposed by `esphome`, and Tasmota transmitters by
+`mqtt`; neither is corrected, so no other room's timing changes.
+
+Rooms whose emitter was positively identified as an affected S18 also get a
+per-room **"S18 Space Compensation"** switch on the MWM Ears device. Leave
+it on to pre-stretch spaces; flip it off to send the nominal grid (the escape
+hatch if a future firmware revision stops needing the correction).
 
 ## Room-level awareness
 

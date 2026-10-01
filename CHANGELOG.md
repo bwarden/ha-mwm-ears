@@ -4,6 +4,32 @@ All notable changes to the mwm_ears Home Assistant integration.
 Releases are tagged `v<version>`; version numbers live in
 `manifest.json` and `const.py` in lockstep.
 
+## [0.8.4] - 2026-09-30
+
+### Fixed
+
+- **Compensate the Tuya-firmware S18 bit-clock compression.** An S18 IR
+  blaster running Tuya's stock firmware shortens every space by a fixed
+  ~88 µs, pushing the effective baud to ~2600 vs 2400 nominal. Tolerant
+  receivers decode it, but the ears' strict tick clock does not, so rooms
+  bound to such an emitter were unreliable. Every space is now pre-stretched
+  by 88 µs before sending, restoring the nominal 417 µs grid.
+
+### Changed
+
+- **Space compensation is keyed to the emitter's firmware identity, not the
+  room.** A room's compensation applies only when its emitter entity is
+  exposed by `tuya_local` *and* the owning config entry selects the
+  `basic_ir_remote` driver. The identical board reflashed with
+  ESPHome/LibreTiny (`esphome`) and Tasmota transmitters (`mqtt`) reproduce
+  the grid exactly and are left untouched, so no other room's timing changes.
+  Any emitter not positively identified sends the nominal grid.
+
+- **New per-room "S18 Space Compensation" switch** on the MWM Ears device,
+  created only for rooms whose emitter was positively identified as an
+  affected S18. Turn it off to send the nominal grid — the escape hatch if a
+  future firmware revision stops needing the correction.
+
 ## [0.8.3] - 2026-09-26
 
 ### Setup
