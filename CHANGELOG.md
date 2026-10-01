@@ -4,6 +4,24 @@ All notable changes to the mwm_ears Home Assistant integration.
 Releases are tagged `v<version>`; version numbers live in
 `manifest.json` and `const.py` in lockstep.
 
+## [0.8.5] - 2026-09-30
+
+### Fixed
+
+- **Drop the redundant `infrared-protocols` requirement from the manifest.**
+  Home Assistant's own `infrared` component already installs
+  `infrared-protocols` (its manifest pins `infrared-protocols==10.1.0`), so the
+  custom integration re-listing it was both unnecessary and forbidden -- Hassfest
+  rejects a custom integration that declares a Home Assistant core dependency:
+
+      [ERROR] [REQUIREMENTS] Requirement infrared-protocols is a dependency of
+      Home Assistant itself and must not be listed in the manifest of a custom
+      integration.
+
+  The `Command` envelope import in `_mwm/command.py` is unaffected: it resolves
+  from HA's already-installed package, with the existing self-contained fallback
+  for non-HA test environments.
+
 ## [0.8.4] - 2026-09-30
 
 ### Fixed

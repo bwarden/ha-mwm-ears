@@ -18,9 +18,10 @@ The component is self-contained: the MWM protocol library is vendored
 under `custom_components/mwm_ears/_mwm/` (framing, CRC-8/Dallas,
 palette tables, phrase decoder, timing codec) from the published
 [`python-mwm`](https://github.com/bwarden/python-mwm) repository, pinned to
-that repo's release tag. The only external requirement is
-`infrared-protocols`, pulled in via the manifest for the framework's
-`Command` envelope type; MWM support itself lives here.
+that repo's release tag. The framework's `Command` envelope type comes from
+`infrared-protocols`, which Home Assistant's own `infrared` component already
+installs, so the manifest does not (and must not) re-list it; MWM support
+itself lives here.
 
 ## Install via HACS
 
