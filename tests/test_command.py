@@ -21,6 +21,25 @@ class MwmCommandTests(unittest.TestCase):
         self.assertEqual(cmd.get_raw_timings(), raw_timings(frame))
         self.assertEqual(cmd.frame, frame)
 
+    def test_space_stretch_lengthens_spaces_not_marks(self):
+        """Tuya S18 compensation adds to spaces (negative runs) only."""
+        frame = build_frame([0x61, 0x66])
+        base = raw_timings(frame)
+        comp = MwmCommand(frame, space_stretch_us=88).get_raw_timings()
+        self.assertEqual(len(base), len(comp))
+        for i, (b, c) in enumerate(zip(base, comp)):
+            if i % 2 == 0:  # mark: unchanged
+                self.assertEqual(c, b)
+            else:  # space: 88us longer in magnitude
+                self.assertEqual(abs(c) - abs(b), 88)
+
+    def test_space_stretch_zero_is_passthrough(self):
+        frame = build_frame([0x60])
+        self.assertEqual(
+            MwmCommand(frame, space_stretch_us=0).get_raw_timings(),
+            raw_timings(frame),
+        )
+
     def test_repeat_count_default_zero(self):
         self.assertEqual(MwmCommand(build_frame([0x60])).repeat_count, 0)
         self.assertEqual(

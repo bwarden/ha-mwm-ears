@@ -58,6 +58,9 @@ from .const import (
     HUB_KEY,
     INTEGRATION_VERSION,
     REPEAT_GAP_S,
+    TUYA_S18_DEVICE_TYPE,
+    TUYA_S18_PLATFORM,
+    TUYA_S18_SPACE_COMP_US,
 )
 from .ears import (
     ENFORCE_INTERVAL_S,
@@ -146,6 +149,49 @@ def _entity_discovered(hass: HomeAssistant, entity_id: str | None) -> bool:
     if not entity_id:
         return True
     return hass.states.get(entity_id) is not None
+
+
+def _space_compensation_us(hass: HomeAssistant, emitter_entity: str | None) -> int:
+    """Microseconds of space pre-stretch *emitter_entity*'s firmware needs.
+
+    Stock Tuya-firmware S18 IR blasters compress every space by a fixed ~88 us
+    (see TUYA_S18_SPACE_COMP_US). Rather than key on a room, an entity id, or
+    the integration platform alone -- all of which mis-attribute the quirk --
+    this keys on the emitter's identity: the entity must be exposed by the
+    tuya_local integration AND its owning config entry must select the
+    basic_ir_remote driver (the S18 family). The same board reflashed with
+    ESPHome/LibreTiny is exposed by esphome and reproduces the grid exactly,
+    and Tasmota transmitters are exposed by mqtt -- neither needs compensation.
+
+    Any emitter we cannot positively identify (unknown platform, missing entry,
+    a lookup failure) gets 0: sending the nominal grid is the correct default,
+    and only the positively-identified affected firmware is corrected.
+    """
+    if not emitter_entity:
+        return 0
+    try:
+        from homeassistant.helpers import entity_registry as er
+
+        reg = er.async_get(hass)
+        ent = reg.async_get(emitter_entity)
+        if ent is None or ent.platform != TUYA_S18_PLATFORM:
+            return 0
+        owner = hass.config_entries.async_get_entry(ent.config_entry_id)
+        if owner is None or owner.data.get("type") != TUYA_S18_DEVICE_TYPE:
+            return 0
+    except Exception:  # noqa: BLE001 - identification must never block sending
+        _LOGGER.debug(
+            "emitter %s identity lookup failed; sending nominal grid",
+            emitter_entity,
+            exc_info=True,
+        )
+        return 0
+    _LOGGER.info(
+        "emitter %s identified as a Tuya-firmware S18: pre-stretching spaces "
+        "by %d us to compensate for its bit-clock compression",
+        emitter_entity, TUYA_S18_SPACE_COMP_US,
+    )
+    return TUYA_S18_SPACE_COMP_US
 
 
 _CARD_FRONTEND_URL = "/custom_components/mwm_ears/frontend"
@@ -314,6 +360,14 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     if emitter_entity:
 
         emitter_drop_logged = False
+        # Resolve the emitter's firmware identity once at setup (not per frame):
+        # a stock Tuya S18 needs every space pre-stretched by TUYA_S18_SPACE_COMP_US
+        # to counteract its bit-clock compression; every other emitter sends the
+        # nominal grid.  Held in runtime so the S18 compensation switch can
+        # toggle it between sends; "available" is what was detected at setup
+        # (0 => nothing detected => no switch is exposed).
+        runtime["space_comp_us"] = _space_compensation_us(hass, emitter_entity)
+        runtime["space_comp_available_us"] = runtime["space_comp_us"]
 
         async def transmit(frame: bytes, repeat_count: int) -> None:
             nonlocal emitter_drop_logged
@@ -344,7 +398,11 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                     await infrared.async_send_command(
                         hass,
                         emitter_entity,
-                        MwmCommand(frame, repeat_count=0),
+                        MwmCommand(
+                            frame,
+                            repeat_count=0,
+                            space_stretch_us=runtime["space_comp_us"],
+                        ),
                     )
                 except Exception:  # noqa: BLE001 - caller decides policy
                     _LOGGER.exception(

@@ -21,6 +21,24 @@ HUB_KEY = "observed_hub"
 # and ir-mwm-send proved 2x @ ~1.8 s against these very ears.
 REPEAT_GAP_S = 1.8
 
+# Tuya-firmware S18 IR blasters compress the MWM grid: every space is
+# shortened by a fixed ~88 us (mark+space period per bit falls short of the
+# nominal 2 x 417 us, pushing the effective baud to ~2600 vs 2400). Tolerant
+# receivers still decode it, but the ears' strict tick clock does not. The
+# S18 hardware is fine under ESPHome/LibreTiny (correct 2402 baud), so this
+# is firmware-specific and keyed off the emitter's identity, not its room.
+# Pre-stretching every space by this offset restores the nominal grid.
+# (measured 2026-09; see README "Known issue: Tuya-firmware S18").
+TUYA_S18_SPACE_COMP_US = 88
+
+# Emitter identity (firmware) that requires space compensation: the entity is
+# exposed by the tuya_local integration AND its owning config entry selects
+# the basic_ir_remote device driver (the S18 family). Reflected hardware
+# (ESPHome/LibreTiny on the same board) is exposed by esphome, and other
+# emitters (Tasmota/mqtt) reproduce the grid exactly -- none need it.
+TUYA_S18_PLATFORM = "tuya_local"
+TUYA_S18_DEVICE_TYPE = "basic_ir_remote"
+
 # Passive assume-off: seconds of beacon silence after which a light that is
 # ON is taken to mean the ears powered off (so the light entities reflect
 # off).  Only applies while NOT enforcing; enforcing pairs re-assert their

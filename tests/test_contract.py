@@ -184,12 +184,53 @@ class SpacedRepeatContract(unittest.TestCase):
         self.assertIn("asyncio.sleep(REPEAT_GAP_S)", src)
         self.assertIn("range(repeat_count + 1)", src)
         # framework-level repeats must be neutralised
-        self.assertRegex(src, r"MwmCommand\(frame, repeat_count=0\)")
+        self.assertRegex(src, r"MwmCommand\(\s*frame,\s*repeat_count=0")
 
     def test_gap_constant_is_documented(self):
         src = _read("const.py")
         self.assertIn("REPEAT_GAP_S", src)
         self.assertIn("drop cold single frames", src)
+
+
+class TuyaS18CompensationContract(unittest.TestCase):
+    """Space compensation is keyed to the emitter's firmware identity.
+
+    Tuya-firmware S18 IR blasters compress every space by a fixed offset; the
+    compensation must apply to exactly that firmware (tuya_local +
+    basic_ir_remote driver) and to nothing else -- not every room, not the
+    entity id, not the platform alone.
+    """
+
+    def test_transmit_applies_resolved_compensation(self):
+        src = _read("__init__.py")
+        # resolve once at setup, into runtime (so the switch can toggle it)
+        self.assertIn("_space_compensation_us(hass, emitter_entity)", src)
+        self.assertIn('runtime["space_comp_us"]', src)
+        self.assertIn("space_stretch_us=runtime[", src)
+
+    def test_detection_keys_on_platform_and_device_type(self):
+        src = _read("__init__.py")
+        self.assertIn("ent.platform != TUYA_S18_PLATFORM", src)
+        self.assertIn('owner.data.get("type") != TUYA_S18_DEVICE_TYPE', src)
+        # identity is positively identified; anything unknown defaults to 0
+        self.assertIn("return 0", src)
+
+    def test_constants_identify_the_s18_firmware(self):
+        const = _read("const.py")
+        self.assertIn('TUYA_S18_PLATFORM = "tuya_local"', const)
+        self.assertIn('TUYA_S18_DEVICE_TYPE = "basic_ir_remote"', const)
+        self.assertIn("TUYA_S18_SPACE_COMP_US", const)
+
+    def test_switch_exists_only_when_compensation_detected(self):
+        src = _read("switch.py")
+        self.assertIn("MwmS18CompensationSwitch", src)
+        # no switch on emitters that need no compensation
+        self.assertIn('runtime.get("space_comp_available_us", 0)', src)
+
+    def test_switch_toggles_between_full_and_zero(self):
+        src = _read("switch.py")
+        self.assertIn('self._runtime["space_comp_available_us"]', src)
+        self.assertIn('self._runtime["space_comp_us"] = 0', src)
 
 
 class VersionContract(unittest.TestCase):
