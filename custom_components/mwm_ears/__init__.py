@@ -40,7 +40,7 @@ from homeassistant.components.lovelace.resources import (
     ResourceYAMLCollection,
 )
 from homeassistant.config_entries import ConfigEntry, ConfigEntryState
-from homeassistant.const import CONF_URL, STATE_UNAVAILABLE, STATE_UNKNOWN
+from homeassistant.const import CONF_ID, CONF_URL, STATE_UNAVAILABLE, STATE_UNKNOWN
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.exceptions import ConfigEntryNotReady
 from homeassistant.helpers.event import (
