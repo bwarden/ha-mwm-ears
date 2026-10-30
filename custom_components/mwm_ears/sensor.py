@@ -19,7 +19,7 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.device_registry import DeviceInfo
 
-from .const import CONF_RECEIVER_ENTITY, INTEGRATION_VERSION, DOMAIN, HUB_KEY
+from .const import CONF_RECEIVER_ENTITY, INTEGRATION_VERSION, DOMAIN
 from .ears import ObservedHub, ReceiverData
 
 _LOGGER = logging.getLogger(__name__)
@@ -32,7 +32,7 @@ async def async_setup_entry(
 ) -> None:
     runtime = hass.data[DOMAIN][entry.entry_id]
     receiver: ReceiverData = runtime["rx"]  # set: receiver half configured
-    hub: ObservedHub = hass.data[DOMAIN][HUB_KEY]
+    hub: ObservedHub = runtime["hub"]
     if not entry.data.get(CONF_RECEIVER_ENTITY):
         return  # this instance has no receiver half
     async_add_entities(

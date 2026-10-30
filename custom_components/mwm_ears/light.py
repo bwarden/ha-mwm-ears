@@ -27,7 +27,7 @@ from ._mwm import (
     nearest_entry,
     parse_color,
 )
-from .const import CONF_EMITTER_ENTITY, INTEGRATION_VERSION, DOMAIN, HUB_KEY
+from .const import CONF_EMITTER_ENTITY, INTEGRATION_VERSION, DOMAIN
 from .ears import (
     BOTH,
     EAR_OFF_CODE,
@@ -247,7 +247,7 @@ async def async_setup_entry(
 ) -> None:
     runtime = hass.data[DOMAIN][entry.entry_id]
     store: EarPairState = runtime["pair"]  # set: emitter half configured
-    hub: ObservedHub = hass.data[DOMAIN][HUB_KEY]
+    hub: ObservedHub = runtime["hub"]
     name = entry.data["name"]
     if not entry.data.get(CONF_EMITTER_ENTITY):
         return  # this instance has no emitter half

@@ -22,7 +22,7 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.device_registry import DeviceInfo
 
-from .const import CONF_EMITTER_ENTITY, INTEGRATION_VERSION, DOMAIN, HUB_KEY
+from .const import CONF_EMITTER_ENTITY, INTEGRATION_VERSION, DOMAIN
 from .ears import ENFORCE_INTERVAL_S, EarPairState, ObservedHub
 
 _LOGGER = logging.getLogger(__name__)
@@ -48,7 +48,7 @@ async def async_setup_entry(
     if not entry.data.get(CONF_EMITTER_ENTITY):
         return  # enforcement needs an emitter to re-assert state
     pair: EarPairState = runtime["pair"]
-    hub: ObservedHub = hass.data[DOMAIN][HUB_KEY]
+    hub: ObservedHub = runtime["hub"]
     entities = [MwmEnforceSwitch(pair, hub, entry)]
     # Only offer the compensation toggle where compensation was detected --
     # on every other emitter the switch would be a no-op lie.

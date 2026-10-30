@@ -55,7 +55,6 @@ from .const import (
     CONF_EMITTER_ENTITY,
     CONF_RECEIVER_ENTITY,
     DOMAIN,
-    HUB_KEY,
     INTEGRATION_VERSION,
     REPEAT_GAP_S,
     TUYA_S18_DEVICE_TYPE,
@@ -74,13 +73,6 @@ from .show import ShowPlayer
 _LOGGER = logging.getLogger(__name__)
 
 PLATFORMS = ["light", "sensor", "switch"]
-
-
-def _get_hub(hass: HomeAssistant) -> ObservedHub:
-    data = hass.data.setdefault(DOMAIN, {})
-    if HUB_KEY not in data:
-        data[HUB_KEY] = ObservedHub()
-    return data[HUB_KEY]
 
 
 def _make_signal_handler(
@@ -353,8 +345,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             f"infrared entities not yet discovered: {', '.join(missing)}"
         )
 
-    hub = _get_hub(hass)
-    runtime: dict = {"pair": None, "rx": None}
+    hub = ObservedHub()
+    runtime: dict = {"pair": None, "rx": None, "hub": hub}
     hass.data[DOMAIN][entry.entry_id] = runtime
 
     if emitter_entity:
@@ -539,9 +531,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
         entry.async_on_unload(_teardown_sub)
 
-    # Beacon-silence watchdog: shared across all entries (runs once).
-    hub = _get_hub(hass)
-    _BEACON_WDT_KEY = "_beacon_watchdog"
+    # Beacon-silence watchdog: checks each entry's hub
+    _BEACON_WDT_KEY = f"{entry.entry_id}_beacon_watchdog"
     if _BEACON_WDT_KEY not in hass.data[DOMAIN]:
 
         async def _beacon_watchdog(_now) -> None:
@@ -555,10 +546,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             )
         )
 
-    # Enforcement heartbeat: shared across all entries (runs once).  Each
-    # tick re-asserts the held state for every pair with enforcement ON.
-    # Non-enforcing pairs are no-ops (see EarPairState.enforce_tick).
-    _ENFORCE_KEY = f"{DOMAIN}_enforce_ticker"
+    # Enforcement heartbeat: checks this entry's hub pairs
+    _ENFORCE_KEY = f"{entry.entry_id}_enforce_ticker"
     if _ENFORCE_KEY not in hass.data[DOMAIN]:
 
         async def _enforce_ticker(_now) -> None:
