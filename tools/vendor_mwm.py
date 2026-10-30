@@ -45,7 +45,7 @@ _REPO_ROOT = pathlib.Path(__file__).resolve().parents[1]
 # The vendored library's pin.  Bumping this is the whole "pull a new library
 # release" ritual: edit the tag, run `make vendor`, commit the result.
 _MWM_REPO = "https://github.com/bwarden/python-mwm"
-_MWM_TAG = "v0.3.0"
+_MWM_TAG = "v0.4.0"
 
 # Shallow clone of _MWM_REPO at _MWM_TAG; gitignored.  The Makefile's
 # MWM_CACHE default must match this path.
