@@ -44,9 +44,16 @@ class RuntimeShapeContract(unittest.TestCase):
             src, r"hass\.data\[DOMAIN\]\[entry\.entry_id\]\s*$"
         )
 
+    def test_sensor_reads_hub_key_from_runtime_dict(self):
+        src = _read("sensor.py")
+        self.assertIn('runtime["hub"]', src)
+        self.assertNotRegex(
+            src, r"hass\.data\[DOMAIN\]\[entry\.entry_id\]\s*$"
+        )
+
     def test_init_stores_the_runtime_dict(self):
         src = _read("__init__.py")
-        self.assertIn('{"pair": None, "rx": None}', src)
+        self.assertIn('{"pair": None, "rx": None, "hub": hub}', src)
 
     def test_config_flow_uses_the_conf_symbols(self):
         flow = _read("config_flow.py")
