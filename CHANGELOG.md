@@ -4,6 +4,26 @@ All notable changes to the mwm_ears Home Assistant integration.
 Releases are tagged `v<version>`; version numbers live in
 `manifest.json` and `const.py` in lockstep.
 
+## [0.8.6] - 2026-10-31
+
+### Fixed
+
+- **ESPHome receivers now ingest MWM traffic.** `extract_timing_candidates()` only
+  recognized `list`/`tuple` timing sequences; HA's ESPHome infrared platform
+  delivers them as a protobuf `RepeatedScalarContainer`, so signals were counted
+  (`signals_seen`) but never decoded and `message_count` stayed at 0. Any sized
+  iterable of numbers is now accepted, and `Timing` objects / `(mark, space)`
+  pairs are converted to signed microsecond timings.
+- **Google Assistant state reporting no longer crashes.** Lights reported
+  `brightness=None`; assistants that divide brightness by 255 raised
+  `TypeError`. MWM has no brightness concept, so full scale (255) is reported.
+
+### Changed
+
+- **Per-instance assumed state.** Each room now has its own hub/assumed-state
+  tracking instead of a single global; a command heard by one receiver no
+  longer rewrites every room's assumed state.
+
 ## [0.8.5] - 2026-09-30
 
 ### Fixed
