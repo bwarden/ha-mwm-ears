@@ -352,6 +352,12 @@ class MwmEarLight(LightEntity):
         return self._store.side_hs_color(self._side)
 
     @property
+    def brightness(self) -> int:
+        # MWM has no brightness concept; report full scale so assistants
+        # (Google Home) that divide brightness by 255 never see None.
+        return 255
+
+    @property
     def effect(self) -> str | None:
         if self._side == BOTH:
             return self._store.running_effect
