@@ -966,10 +966,52 @@ def extract_timing_candidates(payload) -> list[list[int]]:
             payload, name, _default
         )
         keys = dir(payload)
-    for name in ("timings", "raw_timings", "raw", "levels"):
-        value = getter(name)
-        if isinstance(value, (list, tuple)):
+    # Prefer the known field names first, then fall back to any attribute
+    # that holds a sized iterable of numbers (HA's infrared signal schema
+    # has changed field names/types across versions -- e.g. ESPHome builds
+    # expose timings as a protobuf RepeatedScalarContainer, not a list).
+    preferred = ("timings", "raw_timings", "raw", "levels")
+    ordered = [n for n in preferred if n in keys] + [
+        n for n in keys if n not in preferred
+    ]
+    for name in ordered:
+        # Skip dunder/private and callables.
+        if name.startswith("_"):
+            continue
+        try:
+            value = getter(name)
+        except Exception:  # noqa: BLE001
+            continue
+        if callable(value):
+            continue
+        if not (hasattr(value, "__len__") and len(value) > 0):
+            continue
+        if isinstance(value, (str, bytes, bytearray)):
+            continue
+        # Only accept sequences that look like timing data (numeric or
+        # numeric strings), so we don't ingest unrelated lists.
+        try:
+            is_timing_like = any(
+                isinstance(v, (int, float, str)) and not isinstance(v, bool)
+                for v in value
+            )
+        except Exception:  # noqa: BLE001
+            is_timing_like = False
+        if is_timing_like:
             sources.append(list(value))
+    # Hard fallback: if nothing matched, try the canonical field directly.
+    if not sources:
+        for name in ("timings", "raw_timings", "raw", "levels"):
+            try:
+                value = getter(name)
+            except Exception:  # noqa: BLE001
+                continue
+            if hasattr(value, "__len__") and len(value) > 0:
+                try:
+                    sources.append(list(value))
+                    break
+                except Exception:  # noqa: BLE001
+                    continue
     cleaned: list[list[int]] = []
     for src in sources:
         nums: list[int] = []
@@ -978,13 +1020,28 @@ def extract_timing_candidates(payload) -> list[list[int]]:
                 continue
             if isinstance(item, (int, float)):
                 nums.append(int(item))
-            elif isinstance(item, str):
+                continue
+            if isinstance(item, str):
                 # Tolerate "+415", "-380", "415"; silently drop letter
                 # tokens such as Tasmota's compact repeat codes ("dC").
                 try:
                     nums.append(int(float(item.strip())))
                 except ValueError:
                     continue
+                continue
+            # HA 2026.x may deliver timings as objects with high_us/low_us
+            # (or as (mark, space) tuples) instead of flat signed ints.
+            high = getattr(item, "high_us", None)
+            low = getattr(item, "low_us", None)
+            if high is None and isinstance(item, (list, tuple)) and len(item) >= 2:
+                high, low = item[0], item[1]
+            if high is not None and low is not None:
+                try:
+                    nums.append(int(high))          # mark (positive)
+                    nums.append(-abs(int(low)))     # space (negative)
+                    continue
+                except (TypeError, ValueError):
+                    pass
         if nums:
             # Same capture often surfaces under several attribute names;
             # keep the first occurrence only so frames aren't ingested
@@ -1193,13 +1250,52 @@ class ReceiverData:
         decode_timings produces no frames.
         """
         self.signals_seen += 1
+        # Slotted dataclasses (HA's InfraredReceivedSignal) have no
+        # __dict__, so fall back to dir() and surface every list-valued
+        # attribute -- this is what makes a "no candidates" case debuggable
+        # instead of opaque.
+        if isinstance(payload, dict):
+            attr_names = sorted(payload.keys())
+        elif hasattr(payload, "__dict__"):
+            attr_names = sorted(vars(payload))
+        else:
+            attr_names = sorted(
+                n for n in dir(payload) if not n.startswith("_")
+            )
+        list_attrs = {}
+        timing_info = {}
+        for name in attr_names:
+            try:
+                val = payload[name] if isinstance(payload, dict) else getattr(
+                    payload, name
+                )
+            except Exception as exc:  # noqa: BLE001
+                timing_info[name] = {"error": str(exc)}
+                continue
+            if hasattr(val, "__len__") and not isinstance(
+                val, (str, bytes, bytearray)
+            ):
+                try:
+                    list_attrs[name] = len(val)
+                except Exception:  # noqa: BLE001
+                    pass
+            if name == "timings":
+                timing_info[name] = {
+                    "type": type(val).__name__,
+                    "len": len(val) if hasattr(val, "__len__") else None,
+                    "item_type": type(val[0]).__name__ if (
+                        hasattr(val, "__len__") and len(val) > 0
+                    ) else None,
+                    "head": (
+                        [str(x) for x in list(val)[:3]]
+                        if hasattr(val, "__len__") else None
+                    ),
+                }
         self.last_signal_debug = {
             "payload_type": type(payload).__name__,
-            "attributes": (
-                sorted(k for k in vars(payload))  # instance attrs only
-                if hasattr(payload, "__dict__") else
-                sorted(payload.keys()) if isinstance(payload, dict) else None
-            ),
+            "attributes": attr_names,
+            "list_attrs": list_attrs,
+            "timing_info": timing_info,
             "candidate_lengths": [len(c) for c in candidates],
             "head": candidates[0][:6] if candidates else None,
         }
