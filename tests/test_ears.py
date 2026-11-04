@@ -977,6 +977,25 @@ class ReceiverDataTests(unittest.TestCase):
         self.assertEqual(rd.last_frames_hex, good.hex().upper())
         self.assertEqual(len(seen), 1)  # only valid traffic notifies
 
+    def test_cross_signal_bundle_reassembles_companion(self):
+        # HA delivers each A/B/A' frame as a separate signal.
+        t = [0.0]
+        rd = ears.ReceiverData(clock=lambda: t[0])
+        phrase = build_frame([0x61, 0x6A])
+        companion = build_frame([0x24, 0x58, 0xF0, 0x48, 0x04])
+        rd.ingest([phrase])
+        self.assertFalse(rd.last_is_bundle)
+        self.assertIsNone(rd.last_companion_hex)
+        t[0] = 0.03
+        rd.ingest([companion])
+        self.assertFalse(rd.last_is_bundle)
+        self.assertIsNone(rd.last_companion_hex)
+        t[0] = 0.07
+        rd.ingest([phrase])
+        self.assertTrue(rd.last_is_bundle)
+        self.assertEqual(rd.last_phrase_hex, phrase.hex().upper())
+        self.assertEqual(rd.last_companion_hex, companion.hex().upper())
+
     def test_note_signal_notifies_listeners(self):
         rd = ears.ReceiverData()
         seen = []
