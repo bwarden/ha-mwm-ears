@@ -21,6 +21,8 @@ from homeassistant.components.switch import SwitchEntity
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.device_registry import DeviceInfo
+from homeassistant.helpers.event import async_track_state_change_event
+from homeassistant.const import STATE_UNAVAILABLE
 
 from .const import CONF_EMITTER_ENTITY, INTEGRATION_VERSION, DOMAIN
 from .ears import ENFORCE_INTERVAL_S, EarPairState, ObservedHub
@@ -68,6 +70,7 @@ class MwmEnforceSwitch(SwitchEntity):
     ) -> None:
         self._pair = pair
         self._hub = hub
+        self._emitter_entity = getattr(pair, "emitter_entity", None)
         self._attr_name = f"{entry.data['name']} Enforce Ears"
         self._attr_unique_id = f"{entry.entry_id}-enforce"
         self._attr_device_info = _device_info(entry)
@@ -75,6 +78,12 @@ class MwmEnforceSwitch(SwitchEntity):
     async def async_added_to_hass(self) -> None:
         self._pair.listeners.append(self.async_write_ha_state)
         self._hub.listeners.append(self.async_write_ha_state)
+        if self._emitter_entity:
+            self.async_on_remove(
+                async_track_state_change_event(
+                    self.hass, self._emitter_entity, lambda _e: self.async_write_ha_state()
+                )
+            )
 
     async def async_will_remove_from_hass(self) -> None:
         for listeners in (self._pair.listeners, self._hub.listeners):
@@ -86,6 +95,15 @@ class MwmEnforceSwitch(SwitchEntity):
     @property
     def is_on(self) -> bool:
         return self._pair.enforce
+
+    @property
+    def available(self) -> bool:
+        if not super().available:
+            return False
+        if not self._emitter_entity:
+            return True
+        state = self.hass.states.get(self._emitter_entity)
+        return state is not None and state.state != STATE_UNAVAILABLE
 
     async def async_turn_on(self, **kwargs) -> None:
         self._pair.set_enforce(True)
@@ -114,9 +132,27 @@ class MwmS18CompensationSwitch(SwitchEntity):
 
     def __init__(self, runtime: dict, entry: ConfigEntry) -> None:
         self._runtime = runtime
+        self._emitter_entity = entry.data.get("emitter_entity") if hasattr(entry, "data") else None
         self._attr_name = f"{entry.data['name']} S18 Space Compensation"
         self._attr_unique_id = f"{entry.entry_id}-s18-comp"
         self._attr_device_info = _device_info(entry)
+
+    async def async_added_to_hass(self) -> None:
+        if self._emitter_entity:
+            self.async_on_remove(
+                async_track_state_change_event(
+                    self.hass, self._emitter_entity, lambda _e: self.async_write_ha_state()
+                )
+            )
+
+    @property
+    def available(self) -> bool:
+        if not super().available:
+            return False
+        if not self._emitter_entity:
+            return True
+        state = self.hass.states.get(self._emitter_entity)
+        return state is not None and state.state != STATE_UNAVAILABLE
 
     @property
     def is_on(self) -> bool:

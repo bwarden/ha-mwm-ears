@@ -17,6 +17,7 @@ from homeassistant.const import ATTR_ENTITY_ID, STATE_UNAVAILABLE
 from homeassistant.core import HomeAssistant, ServiceCall
 from homeassistant.exceptions import ServiceValidationError
 from homeassistant.helpers.device_registry import DeviceInfo
+from homeassistant.helpers.event import async_track_state_change_event
 from homeassistant.util.color import color_hs_to_RGB
 
 from ._mwm import (
@@ -320,6 +321,13 @@ class MwmEarLight(LightEntity):
         if player is not None:
             player.listeners.append(self.async_write_ha_state)
         _BY_ENTITY_ID[self.entity_id] = self
+        emitter = getattr(self._store, "emitter_entity", None)
+        if emitter:
+            self.async_on_remove(
+                async_track_state_change_event(
+                    self.hass, emitter, lambda _e: self.async_write_ha_state()
+                )
+            )
         _LOGGER.debug(
             "registered light %s (room=%r, side=%s, emitter=%r)",
             self.entity_id, self._store.room_name, self._side,
@@ -337,6 +345,16 @@ class MwmEarLight(LightEntity):
                 group.remove(self.async_write_ha_state)
             except ValueError:
                 pass
+
+    @property
+    def available(self) -> bool:
+        if not super().available:
+            return False
+        emitter = getattr(self._store, "emitter_entity", None)
+        if not emitter:
+            return True
+        state = self.hass.states.get(emitter)
+        return state is not None and state.state != STATE_UNAVAILABLE
 
     @property
     def is_on(self) -> bool:
