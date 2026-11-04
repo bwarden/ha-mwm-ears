@@ -1420,3 +1420,29 @@ class ReceiverData:
             self.last_bundle_desc = None
             self.last_summary = "; ".join(summaries)
             self._notify_listeners()
+
+
+def frames_form_bundle(frames: list[bytes]) -> bool:
+    """Loose bundle check: standard describe_bundle OR a beacon bundle.
+
+    Standard bundles require the first and third frames to match except for
+    the trailing rolling-counter/CRC pair. Idle/demo beacons carry a
+    volatile clock tick (and CRC) that is not in the last two bytes, so
+    allow them to differ only in the clock-tick position and CRC.
+    """
+    if len(frames) != 3:
+        return False
+    if describe_bundle(frames) is not None:
+        return True
+    a, b, c = (bytes(f) for f in frames)
+    if len(a) != len(c) or a[0] != c[0] or a == b or a == c:
+        return False
+    # Beacon bundles: header 0x9x, content opens with 42 00 00.
+    if len(a) < 8 or a[1:4] != bytes((0x42, 0x00, 0x00)):
+        return False
+    for i in range(len(a)):
+        if i in (7, len(a) - 1):
+            continue
+        if a[i] != c[i]:
+            return False
+    return True
