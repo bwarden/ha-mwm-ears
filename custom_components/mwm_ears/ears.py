@@ -1227,7 +1227,7 @@ class ObservedHub:
 class ReceiverData:
     """Per-receiver-entry counters for its diagnostic sensors."""
 
-    def __init__(self) -> None:
+    def __init__(self, *, clock=time.monotonic) -> None:
         self.listeners: list = []
         self.message_count = 0
         self.invalid_count = 0
@@ -1241,6 +1241,10 @@ class ReceiverData:
         self.last_summary = ""
         self.last_frames_desc: list[dict] = []
         self.last_bundle_desc: dict | None = None
+        self._clock = clock
+        self._bundle_buffer: list[tuple[float, bytes]] = []
+        self._bundle_window_s = 0.2
+        self._bundle_grace_s = 0.1
 
     def note_signal(self, payload, candidates: list[list[int]]) -> None:
         """Census one received signal regardless of decodability.
@@ -1302,6 +1306,23 @@ class ReceiverData:
         for callback in self.listeners:
             callback()
 
+    def _notify_listeners(self) -> None:
+        for callback in self.listeners:
+            callback()
+
+    def _find_bundle(self) -> tuple[int, int, int] | None:
+        buf = self._bundle_buffer
+        n = len(buf)
+        for k in range(n - 1, 1, -1):
+            for j in range(k - 1, 0, -1):
+                for i in range(j - 1, -1, -1):
+                    if buf[k][0] - buf[i][0] > self._bundle_window_s:
+                        break
+                    frames = [buf[i][1], buf[j][1], buf[k][1]]
+                    if describe_bundle(frames) is not None:
+                        return i, j, k
+        return None
+
     def ingest(self, frames: list[bytes]) -> None:
         valid_frames: list[bytes] = []
         summaries: list[str] = []
@@ -1310,33 +1331,92 @@ class ReceiverData:
             if not ok:
                 self.invalid_count += 1
                 continue
-            valid_frames.append(frame)
+            valid_frames.append(bytes(frame))
             summaries.append(describe_frame(frame)["summary"])
         self.message_count += len(frames)
-        if valid_frames:
+        if not valid_frames:
+            return
+
+        now = self._clock()
+        for f in valid_frames:
+            self._bundle_buffer.append((now, f))
+        self._bundle_buffer = [
+            (t, f) for (t, f) in self._bundle_buffer
+            if now - t <= self._bundle_window_s
+        ]
+
+        bundle = describe_bundle(valid_frames) if len(valid_frames) == 3 else None
+        if bundle is not None:
+            del self._bundle_buffer[-len(valid_frames):]
+            self.last_is_bundle = True
+            self.last_phrase_hex = bundle["phrase_hex"]
+            self.last_companion_hex = bundle["companion_hex"]
             self.last_frames_hex = "+".join(
                 f.hex().upper() for f in valid_frames
             )
-            # Wand/ear commands arrive as [phrase][companion][phrase];
-            # report that as ONE logical command instead of three lines,
-            # keeping the A (phrase) and B (companion) parts separately
-            # visible -- A' is omitted when identical to A.
             self.last_frames_desc = [
                 describe_frame(f) for f in valid_frames
             ]
-            bundle = describe_bundle(valid_frames)
-            self.last_is_bundle = bundle is not None
             self.last_bundle_desc = bundle
-            if bundle:
-                self.last_phrase_hex = bundle["phrase_hex"]
-                self.last_companion_hex = bundle["companion_hex"]
-            else:
-                self.last_phrase_hex = "+".join(
-                    f.hex().upper() for f in valid_frames
-                )
-                self.last_companion_hex = None
-            self.last_summary = (
-                bundle["summary"] if bundle else "; ".join(summaries)
+            self.last_summary = bundle["summary"]
+            self._notify_listeners()
+            return
+
+        found = self._find_bundle()
+        if found is not None:
+            i, j, k = found
+            a = self._bundle_buffer[i][1]
+            b = self._bundle_buffer[j][1]
+            aprime = self._bundle_buffer[k][1]
+            for idx in sorted((i, j, k), reverse=True):
+                del self._bundle_buffer[idx]
+            bundle = describe_bundle([a, b, aprime])
+            self.last_is_bundle = True
+            self.last_phrase_hex = a.hex().upper()
+            self.last_companion_hex = b.hex().upper()
+            self.last_frames_hex = "+".join(
+                f.hex().upper() for f in (a, b, aprime)
             )
-            for callback in self.listeners:
-                callback()
+            self.last_frames_desc = [
+                describe_frame(f) for f in (a, b, aprime)
+            ]
+            self.last_bundle_desc = bundle
+            self.last_summary = (
+                bundle["summary"] if bundle is not None
+                else "; ".join(summaries)
+            )
+            self._notify_listeners()
+            return
+
+        flushed = False
+        while (
+            self._bundle_buffer
+            and now - self._bundle_buffer[0][0] > self._bundle_grace_s
+        ):
+            _t, f = self._bundle_buffer.pop(0)
+            self.last_is_bundle = False
+            self.last_phrase_hex = f.hex().upper()
+            self.last_companion_hex = None
+            self.last_frames_hex = f.hex().upper()
+            self.last_frames_desc = [describe_frame(f)]
+            self.last_bundle_desc = None
+            self.last_summary = describe_frame(f)["summary"]
+            flushed = True
+        if flushed:
+            self._notify_listeners()
+            return
+
+        if len(self._bundle_buffer) == len(valid_frames):
+            last = valid_frames[-1]
+            self.last_is_bundle = False
+            self.last_phrase_hex = last.hex().upper()
+            self.last_companion_hex = None
+            self.last_frames_hex = "+".join(
+                f.hex().upper() for f in valid_frames
+            )
+            self.last_frames_desc = [
+                describe_frame(f) for f in valid_frames
+            ]
+            self.last_bundle_desc = None
+            self.last_summary = "; ".join(summaries)
+            self._notify_listeners()
