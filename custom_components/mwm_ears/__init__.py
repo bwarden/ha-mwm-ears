@@ -81,12 +81,33 @@ def _make_signal_handler(
     hub: ObservedHub,
     receiver_entity: str | None = None,
 ):
-    """Decode received raw timings into frames for sensors + hub."""
+    """Decode received raw timings into frames for sensors + hub.
+
+    HA's infrared platform delivers each frame of an MWM A-B-A' bundle as
+    a separate signal (and the firmware only decodes the first frame), so
+    buffer raw timings across signals and reassemble a bundle when the
+    combined capture decodes into one. Single frames are flushed after a
+    short grace period.
+    """
+    import time as _time
+
+    timing_buffer: list[tuple[float, list[int]]] = []
+    window_s = 0.25
+    grace_s = 0.12
+
+    def _loose_bundle(frames: list[bytes]) -> bool:
+        if len(frames) != 3:
+            return False
+        from .ears import frames_form_bundle
+
+        return frames_form_bundle(frames)
 
     @callback
     def handler(signal) -> None:
         candidates = extract_timing_candidates(signal)
         receiver.note_signal(signal, candidates)
+
+        # Decode this signal on its own (immediate single-frame reporting).
         frames_out: list[bytes] = []
         for timings in candidates:
             try:
@@ -95,12 +116,41 @@ def _make_signal_handler(
                 continue
             if frames:
                 frames_out.extend(frames)
+
+        now = _time.monotonic()
+        for timings in candidates:
+            timing_buffer.append((now, list(timings)))
+        timing_buffer[:] = [
+            (t, tim) for (t, tim) in timing_buffer if now - t <= window_s
+        ]
+
+        combined: list[int] = []
+        for _t, tim in timing_buffer:
+            combined.extend(tim)
+
+        try:
+            combined_frames = decode_timings(combined)
+        except (ValueError, TypeError):
+            combined_frames = []
+
+        # Look for a bundle among the combined frames.
+        bundle_idx: int | None = None
+        for i in range(len(combined_frames) - 2):
+            if _loose_bundle(combined_frames[i : i + 3]):
+                bundle_idx = i
+                break
+
+        if bundle_idx is not None:
+            bundle_frames = combined_frames[bundle_idx : bundle_idx + 3]
+            timing_buffer.clear()
+            receiver.ingest(bundle_frames)
+            for pair in hub.ingest(bundle_frames, receiver=receiver_entity):
+                hass.async_create_task(pair.enforce_reassert())
+            return
+
         if not frames_out:
             return  # census kept the evidence; nothing MWM-shaped here
         receiver.ingest(frames_out)
-        # Enforcing pairs that heard a foreign (non-echo) signal are pulled
-        # back onto their held state immediately (enforce_reassert is a
-        # no-op for non-enforcing pairs, so scheduling it is always safe).
         for pair in hub.ingest(frames_out, receiver=receiver_entity):
             hass.async_create_task(pair.enforce_reassert())
 
