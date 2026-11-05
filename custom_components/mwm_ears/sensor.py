@@ -67,10 +67,15 @@ class _ReceiverSensor(SensorEntity):
     @property
     def available(self) -> bool:
         ir_entity = getattr(self, "_ir_entity_id", None)
-        if not ir_entity:
+        if not ir_entity or not getattr(self, "hass", None):
             return True
         state = self.hass.states.get(ir_entity)
-        return state is not None and state.state != STATE_UNAVAILABLE
+        return state is None or state.state != STATE_UNAVAILABLE
+
+    @available.setter
+    def available(self, value: bool) -> None:
+        # Data descriptor so this overrides Entity's cached_property.
+        self._attr_available = value
 
     def _bind(self, listeners: list) -> None:
         self._listeners = listeners

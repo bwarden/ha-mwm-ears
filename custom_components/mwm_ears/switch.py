@@ -98,10 +98,15 @@ class MwmEnforceSwitch(SwitchEntity):
 
     @property
     def available(self) -> bool:
-        if not self._emitter_entity:
+        if not self._emitter_entity or not getattr(self, "hass", None):
             return True
         state = self.hass.states.get(self._emitter_entity)
-        return state is not None and state.state != STATE_UNAVAILABLE
+        return state is None or state.state != STATE_UNAVAILABLE
+
+    @available.setter
+    def available(self, value: bool) -> None:
+        # Data descriptor so this overrides Entity's cached_property.
+        self._attr_available = value
 
     async def async_turn_on(self, **kwargs) -> None:
         self._pair.set_enforce(True)
@@ -145,10 +150,15 @@ class MwmS18CompensationSwitch(SwitchEntity):
 
     @property
     def available(self) -> bool:
-        if not self._emitter_entity:
+        if not self._emitter_entity or not getattr(self, "hass", None):
             return True
         state = self.hass.states.get(self._emitter_entity)
-        return state is not None and state.state != STATE_UNAVAILABLE
+        return state is None or state.state != STATE_UNAVAILABLE
+
+    @available.setter
+    def available(self, value: bool) -> None:
+        # Data descriptor so this overrides Entity's cached_property.
+        self._attr_available = value
 
     @property
     def is_on(self) -> bool:

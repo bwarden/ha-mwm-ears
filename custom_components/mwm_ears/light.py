@@ -349,10 +349,15 @@ class MwmEarLight(LightEntity):
     @property
     def available(self) -> bool:
         emitter = getattr(self._store, "emitter_entity", None)
-        if not emitter:
+        if not emitter or not getattr(self, "hass", None):
             return True
         state = self.hass.states.get(emitter)
-        return state is not None and state.state != STATE_UNAVAILABLE
+        return state is None or state.state != STATE_UNAVAILABLE
+
+    @available.setter
+    def available(self, value: bool) -> None:
+        # Data descriptor so this overrides Entity's cached_property.
+        self._attr_available = value
 
     @property
     def is_on(self) -> bool:
