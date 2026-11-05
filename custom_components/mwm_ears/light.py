@@ -348,8 +348,6 @@ class MwmEarLight(LightEntity):
 
     @property
     def available(self) -> bool:
-        if not super().available:
-            return False
         emitter = getattr(self._store, "emitter_entity", None)
         if not emitter:
             return True

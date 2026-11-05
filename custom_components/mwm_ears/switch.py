@@ -98,8 +98,6 @@ class MwmEnforceSwitch(SwitchEntity):
 
     @property
     def available(self) -> bool:
-        if not super().available:
-            return False
         if not self._emitter_entity:
             return True
         state = self.hass.states.get(self._emitter_entity)
@@ -147,8 +145,6 @@ class MwmS18CompensationSwitch(SwitchEntity):
 
     @property
     def available(self) -> bool:
-        if not super().available:
-            return False
         if not self._emitter_entity:
             return True
         state = self.hass.states.get(self._emitter_entity)

@@ -66,8 +66,6 @@ class _ReceiverSensor(SensorEntity):
 
     @property
     def available(self) -> bool:
-        if not super().available:
-            return False
         ir_entity = getattr(self, "_ir_entity_id", None)
         if not ir_entity:
             return True
