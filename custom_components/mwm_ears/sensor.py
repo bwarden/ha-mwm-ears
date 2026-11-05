@@ -18,9 +18,6 @@ from homeassistant.components.sensor import (
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.device_registry import DeviceInfo
-from homeassistant.helpers.event import async_track_state_change_event, async_track_time_interval
-from datetime import timedelta
-from homeassistant.const import STATE_UNAVAILABLE
 
 from .const import CONF_RECEIVER_ENTITY, INTEGRATION_VERSION, DOMAIN
 from .ears import ObservedHub, ReceiverData
@@ -54,7 +51,6 @@ class _ReceiverSensor(SensorEntity):
     _attr_should_poll = False
 
     def __init__(self, entry: ConfigEntry) -> None:
-        self._attr_available = True
         self._attr_device_info = DeviceInfo(
             identifiers={(DOMAIN, f"mwm_ears_{entry.entry_id}")},
             name="MWM Ears",
@@ -66,42 +62,11 @@ class _ReceiverSensor(SensorEntity):
         self._room = entry.data["name"]
         self._ir_entity_id = entry.data[CONF_RECEIVER_ENTITY]
 
-    def _on_ir_state_change(self, event) -> None:
-        try:
-            new_state = event.data.get("new_state")
-            new_avail = new_state is not None and new_state.state != "unavailable"
-            if self._attr_available != new_avail:
-                self._attr_available = new_avail
-                self.__dict__.pop("available", None)
-        except Exception:
-            pass
-        self.async_write_ha_state()
-
     def _bind(self, listeners: list) -> None:
         self._listeners = listeners
 
     async def async_added_to_hass(self) -> None:
-        self._attr_available = True
         self._listeners.append(self.async_write_ha_state)
-        ir_entity = getattr(self, "_ir_entity_id", None)
-        if ir_entity:
-            st = self.hass.states.get(ir_entity)
-            self._attr_available = st is None or st.state != "unavailable"
-            self.async_on_remove(
-                async_track_state_change_event(
-                    self.hass, ir_entity, self._on_ir_state_change
-                )
-            )
-            async def _avail_check(_now):
-                st = self.hass.states.get(ir_entity)
-                new_avail = st is None or st.state != "unavailable"
-                if self._attr_available != new_avail:
-                    self._attr_available = new_avail
-                    self.__dict__.pop("available", None)
-                    self.async_write_ha_state()
-            self.async_on_remove(
-                async_track_time_interval(self.hass, _avail_check, timedelta(seconds=15))
-            )
 
     async def async_will_remove_from_hass(self) -> None:
         try:
