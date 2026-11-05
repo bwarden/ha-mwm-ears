@@ -53,6 +53,7 @@ class _ReceiverSensor(SensorEntity):
     _attr_should_poll = False
 
     def __init__(self, entry: ConfigEntry) -> None:
+        self._attr_available = True
         self._attr_device_info = DeviceInfo(
             identifiers={(DOMAIN, f"mwm_ears_{entry.entry_id}")},
             name="MWM Ears",
@@ -64,29 +65,27 @@ class _ReceiverSensor(SensorEntity):
         self._room = entry.data["name"]
         self._ir_entity_id = entry.data[CONF_RECEIVER_ENTITY]
 
-    @property
-    def available(self) -> bool:
-        ir_entity = getattr(self, "_ir_entity_id", None)
-        if not ir_entity or not getattr(self, "hass", None):
-            return True
-        state = self.hass.states.get(ir_entity)
-        return state is None or state.state != STATE_UNAVAILABLE
-
-    @available.setter
-    def available(self, value: bool) -> None:
-        # Data descriptor so this overrides Entity's cached_property.
-        self._attr_available = value
+    def _on_ir_state_change(self, event) -> None:
+        new_state = event.data.get("new_state")
+        new_avail = new_state is not None and new_state.state != "unavailable"
+        if self._attr_available != new_avail:
+            self._attr_available = new_avail
+            self.__dict__.pop("available", None)
+            self.async_write_ha_state()
 
     def _bind(self, listeners: list) -> None:
         self._listeners = listeners
 
     async def async_added_to_hass(self) -> None:
+        self._attr_available = True
         self._listeners.append(self.async_write_ha_state)
         ir_entity = getattr(self, "_ir_entity_id", None)
         if ir_entity:
+            st = self.hass.states.get(ir_entity)
+            self._attr_available = st is None or st.state != "unavailable"
             self.async_on_remove(
                 async_track_state_change_event(
-                    self.hass, ir_entity, lambda _e: self.async_write_ha_state()
+                    self.hass, ir_entity, self._on_ir_state_change
                 )
             )
 

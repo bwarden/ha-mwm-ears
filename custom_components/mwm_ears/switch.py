@@ -71,6 +71,7 @@ class MwmEnforceSwitch(SwitchEntity):
         self._pair = pair
         self._hub = hub
         self._emitter_entity = getattr(pair, "emitter_entity", None)
+        self._attr_available = True
         self._attr_name = f"{entry.data['name']} Enforce Ears"
         self._attr_unique_id = f"{entry.entry_id}-enforce"
         self._attr_device_info = _device_info(entry)
@@ -79,9 +80,11 @@ class MwmEnforceSwitch(SwitchEntity):
         self._pair.listeners.append(self.async_write_ha_state)
         self._hub.listeners.append(self.async_write_ha_state)
         if self._emitter_entity:
+            st = self.hass.states.get(self._emitter_entity)
+            self._attr_available = st is None or st.state != "unavailable"
             self.async_on_remove(
                 async_track_state_change_event(
-                    self.hass, self._emitter_entity, lambda _e: self.async_write_ha_state()
+                    self.hass, self._emitter_entity, self._on_ir_state_change
                 )
             )
 
@@ -96,17 +99,13 @@ class MwmEnforceSwitch(SwitchEntity):
     def is_on(self) -> bool:
         return self._pair.enforce
 
-    @property
-    def available(self) -> bool:
-        if not self._emitter_entity or not getattr(self, "hass", None):
-            return True
-        state = self.hass.states.get(self._emitter_entity)
-        return state is None or state.state != STATE_UNAVAILABLE
-
-    @available.setter
-    def available(self, value: bool) -> None:
-        # Data descriptor so this overrides Entity's cached_property.
-        self._attr_available = value
+    def _on_ir_state_change(self, event) -> None:
+        new_state = event.data.get("new_state")
+        new_avail = new_state is not None and new_state.state != "unavailable"
+        if self._attr_available != new_avail:
+            self._attr_available = new_avail
+            self.__dict__.pop("available", None)
+            self.async_write_ha_state()
 
     async def async_turn_on(self, **kwargs) -> None:
         self._pair.set_enforce(True)
@@ -136,29 +135,28 @@ class MwmS18CompensationSwitch(SwitchEntity):
     def __init__(self, runtime: dict, entry: ConfigEntry) -> None:
         self._runtime = runtime
         self._emitter_entity = entry.data.get("emitter_entity") if hasattr(entry, "data") else None
+        self._attr_available = True
         self._attr_name = f"{entry.data['name']} S18 Space Compensation"
         self._attr_unique_id = f"{entry.entry_id}-s18-comp"
         self._attr_device_info = _device_info(entry)
 
     async def async_added_to_hass(self) -> None:
         if self._emitter_entity:
+            st = self.hass.states.get(self._emitter_entity)
+            self._attr_available = st is None or st.state != "unavailable"
             self.async_on_remove(
                 async_track_state_change_event(
-                    self.hass, self._emitter_entity, lambda _e: self.async_write_ha_state()
+                    self.hass, self._emitter_entity, self._on_ir_state_change
                 )
             )
 
-    @property
-    def available(self) -> bool:
-        if not self._emitter_entity or not getattr(self, "hass", None):
-            return True
-        state = self.hass.states.get(self._emitter_entity)
-        return state is None or state.state != STATE_UNAVAILABLE
-
-    @available.setter
-    def available(self, value: bool) -> None:
-        # Data descriptor so this overrides Entity's cached_property.
-        self._attr_available = value
+    def _on_ir_state_change(self, event) -> None:
+        new_state = event.data.get("new_state")
+        new_avail = new_state is not None and new_state.state != "unavailable"
+        if self._attr_available != new_avail:
+            self._attr_available = new_avail
+            self.__dict__.pop("available", None)
+            self.async_write_ha_state()
 
     @property
     def is_on(self) -> bool:

@@ -300,6 +300,7 @@ class MwmEarLight(LightEntity):
         self._store = store
         self._hub = hub
         self._side = side
+        self._attr_available = True
         base = entry.data["name"]
         suffix = (
             "Ears" if side == BOTH else f"{_SIDE_NAMES[side]} Ear"
@@ -321,11 +322,13 @@ class MwmEarLight(LightEntity):
         if player is not None:
             player.listeners.append(self.async_write_ha_state)
         _BY_ENTITY_ID[self.entity_id] = self
-        emitter = getattr(self._store, "emitter_entity", None)
+        emitter = getattr(getattr(self, "_store", None), "emitter_entity", None)
         if emitter:
+            st = self.hass.states.get(emitter)
+            self._attr_available = st is None or st.state != "unavailable"
             self.async_on_remove(
                 async_track_state_change_event(
-                    self.hass, emitter, lambda _e: self.async_write_ha_state()
+                    self.hass, emitter, self._on_ir_state_change
                 )
             )
         _LOGGER.debug(
@@ -346,18 +349,13 @@ class MwmEarLight(LightEntity):
             except ValueError:
                 pass
 
-    @property
-    def available(self) -> bool:
-        emitter = getattr(self._store, "emitter_entity", None)
-        if not emitter or not getattr(self, "hass", None):
-            return True
-        state = self.hass.states.get(emitter)
-        return state is None or state.state != STATE_UNAVAILABLE
-
-    @available.setter
-    def available(self, value: bool) -> None:
-        # Data descriptor so this overrides Entity's cached_property.
-        self._attr_available = value
+    def _on_ir_state_change(self, event) -> None:
+        new_state = event.data.get("new_state")
+        new_avail = new_state is not None and new_state.state != "unavailable"
+        if self._attr_available != new_avail:
+            self._attr_available = new_avail
+            self.__dict__.pop("available", None)
+            self.async_write_ha_state()
 
     @property
     def is_on(self) -> bool:
