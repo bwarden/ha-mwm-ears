@@ -4,6 +4,27 @@ All notable changes to the mwm_ears Home Assistant integration.
 Releases are tagged `v<version>`; version numbers live in
 `manifest.json` and `const.py` in lockstep.
 
+## [0.8.7] - 2026-11-04
+
+### Fixed
+
+- **Companion frames now reassembled across signals.** HA's infrared platform
+  delivers each frame of an MWM A-B-A' bundle as a separate signal. Raw
+  timings are buffered per receiver and a bundle is reassembled when A, B,
+  and A' arrive within ~250 ms, so the companion sensor reports the B block
+  instead of staying unknown.
+- **Entity availability tracks the underlying IR device.** Light, sensor, and
+  switch entities now report unavailable when their bound infrared
+  emitter/receiver is unavailable, and refresh on its state changes. Tasmota
+  devices resting at `unknown` still count as available.
+- **Idle/demo beacons are single frames**, not bundles; companion stays
+  unknown during beaconing (correct).
+
+### Changed
+
+- **Singles report immediately** while the timing buffer still watches for
+  bundles, so message counters no longer stall.
+
 ## [0.8.6] - 2026-10-31
 
 ### Fixed
