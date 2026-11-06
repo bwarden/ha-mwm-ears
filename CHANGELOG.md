@@ -4,6 +4,46 @@ All notable changes to the mwm_ears Home Assistant integration.
 Releases are tagged `v<version>`; version numbers live in
 `manifest.json` and `const.py` in lockstep.
 
+## [0.8.12] - 2026-11-05
+
+### Fixed
+
+- **Removed MWM-IR availability linking.** HA's `Entity.available` is a
+  `cached_property` and tracking underlying IR device state through it was
+  unreliable. Entities are now always available; the transmit path still
+  drops transmissions when the IR device is offline.
+- **Companion reassembly and timing-buffer fixes** carried forward from
+  0.8.8–0.8.11.
+
+## [0.8.8] - 2026-11-04
+
+### Fixed
+
+- **Availability property must not use cached `super().available`.** Removed
+  the stale cached check that kept entities stuck unavailable.
+
+## [0.8.9] - 2026-11-04
+
+### Fixed
+
+- **Availability as a data descriptor.** Made `available` a data descriptor
+  (with setter) so it overrides HA's `cached_property`.
+
+## [0.8.10] - 2026-11-04
+
+### Fixed
+
+- **Availability via `_attr_available` + cache invalidation.** Replaced
+  property override with direct `_attr_available` management and cache
+  invalidation.
+
+## [0.8.11] - 2026-11-05
+
+### Fixed
+
+- **Periodic availability watchdog.** Added 15-second fallback check for
+  missed state change events.
+
 ## [0.8.7] - 2026-11-04
 
 ### Fixed
